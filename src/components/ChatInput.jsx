@@ -3,7 +3,7 @@ import { APP_CONFIG } from '../database.js';
 import { fileToAttachment } from '../utils/fileReader.js';
 import FilePreview from './FilePreview.jsx';
 
-export default function ChatInput({ disabled, attachments, setAttachments, onSend, onNotice }) {
+export default function ChatInput({ disabled, processing = false, attachments, setAttachments, onSend, onNotice }) {
   const [value, setValue] = useState('');
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -63,7 +63,7 @@ export default function ChatInput({ disabled, attachments, setAttachments, onSen
             disabled={disabled}
             rows={1}
             maxLength={APP_CONFIG.limits.maxMessageLength}
-            placeholder={disabled ? 'Offline dulu, riwayat tetap aman...' : 'Tanya apa aja ke DRAK-GPT...'}
+            placeholder={disabled ? 'Offline dulu, riwayat tetap aman...' : processing ? 'DRAK-GPT lagi mikir, Bos...' : 'Tanya apa aja ke DRAK-GPT...'}
             onChange={(event) => setValue(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
@@ -72,8 +72,8 @@ export default function ChatInput({ disabled, attachments, setAttachments, onSen
               }
             }}
           />
-          <button className="send-button" type="button" onClick={submit} disabled={disabled || (!value.trim() && !attachments.length)}>
-            Kirim
+          <button className={`send-button ${processing ? 'is-loading' : ''}`} type="button" onClick={submit} disabled={disabled || processing || (!value.trim() && !attachments.length)}>
+            {processing ? 'Proses...' : 'Kirim'}
           </button>
         </div>
       </div>

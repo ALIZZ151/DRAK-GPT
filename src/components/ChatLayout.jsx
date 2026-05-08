@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import ChatHeader from './ChatHeader.jsx';
 import ChatSidebar from './ChatSidebar.jsx';
 import ChatInput from './ChatInput.jsx';
@@ -16,6 +17,7 @@ export default function ChatLayout({
   onDeleteChat,
   onRenameChat,
   onClearAll,
+  onLogout,
   themeId,
   onThemeChange,
   online,
@@ -27,6 +29,20 @@ export default function ChatLayout({
   notice,
   onNotice
 }) {
+  const isProcessing = Boolean(chat?.messages?.some((message) => message.loading));
+
+  useEffect(() => {
+    document.body.classList.toggle('sidebar-open', sidebarOpen);
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setSidebarOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.classList.remove('sidebar-open');
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [sidebarOpen, setSidebarOpen]);
+
   return (
     <div className="app-shell">
       <div className="visual-bg" aria-hidden="true">
@@ -43,6 +59,7 @@ export default function ChatLayout({
         onDeleteChat={onDeleteChat}
         onRenameChat={onRenameChat}
         onClearAll={onClearAll}
+        onLogout={onLogout}
         themeId={themeId}
         onThemeChange={onThemeChange}
         storageMode={storageMode}
@@ -65,12 +82,13 @@ export default function ChatLayout({
               <MessageBubble key={message.id} message={message} onRetry={() => onRetry(message)} />
             ))
           ) : (
-            <EmptyState onPrompt={onSend} />
+            <EmptyState />
           )}
         </section>
 
         <ChatInput
           disabled={!online}
+          processing={isProcessing}
           attachments={attachments}
           setAttachments={setAttachments}
           onSend={onSend}

@@ -15,7 +15,8 @@ export default function ChatSidebar({
   onClearAll,
   themeId,
   onThemeChange,
-  storageMode
+  storageMode,
+  onLogout
 }) {
   const [query, setQuery] = useState('');
   const filteredChats = useMemo(() => {
@@ -81,9 +82,14 @@ export default function ChatSidebar({
           </div>
         </div>
 
-        <button className="danger-button" type="button" onClick={onClearAll}>
-          Hapus Semua Local Chat
-        </button>
+        <div className="sidebar-actions-stack">
+          <button className="logout-button" type="button" onClick={onLogout}>
+            Logout Access Gate
+          </button>
+          <button className="danger-button" type="button" onClick={onClearAll}>
+            Hapus Semua Local Chat
+          </button>
+        </div>
 
         <footer className="sidebar-footer">DRAK-GPT by Dev ALIZZ · v{APP_CONFIG.app.version}</footer>
       </aside>

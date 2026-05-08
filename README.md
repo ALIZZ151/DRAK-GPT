@@ -318,3 +318,30 @@ Setelah install dan run, cek:
 ## Developer
 
 DRAK-GPT by Dev ALIZZ.
+
+## Update v1.1 — UI/UX + Access Gate + Karakter AI
+
+Update ini melanjutkan project yang sudah ada, bukan rebuild dari nol.
+
+Perubahan utama:
+
+- Loading page dibuat lebih premium dengan frame sudut, glow, scanning line, particle ringan, dan progress bar.
+- Setelah loading ada access gate frontend:
+  - Key: `5J4ZU89`
+  - Password: `DRAK-GPT`
+  - Status login disimpan di `localStorage`.
+  - Ini hanya access gate tampilan, bukan sistem keamanan server sungguhan.
+- Sidebar/hamburger sekarang drawer kanan dan default tertutup di mobile, tablet, dan desktop.
+- Empty state dibuat clean: logo + `SELAMAT DATANG DI DRAK-GPT` dengan typing effect ringan.
+- Input composer diturunkan dan dibuat lebih nyaman untuk mobile safe area.
+- Ditambahkan micro animation ringan untuk tombol, drawer, bubble chat, input focus, model selector, dan loading state.
+- Tombol logout ditambahkan di sidebar untuk menghapus status access gate.
+- Prompt AI diperkuat dengan karakter DRAK-GPT: bahasa Indonesia santai, ceplas-ceplos, toxic tipis tapi tetap sopan.
+- Anti-ngawur/anti-halusinasi ditambahkan ke prompt internal.
+- `/api/chat` sekarang menggabungkan system prompt + mode instruction + konteks 6–10 pesan terakhir sebelum mengirim ke provider.
+- Response cleaner ditambahkan agar balasan kosong/formal berlebihan tidak langsung tampil mentah.
+
+Catatan deploy:
+
+- `package-lock.json` tidak wajib untuk Vercel. Kalau deployment gagal di tahap `npm install`, hapus `package-lock.json` lalu redeploy.
+- Build command tetap `npm run build` dan output directory tetap `dist`.

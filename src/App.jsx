@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { APP_CONFIG, getModelById, getThemeById } from './database.js';
 import LoadingScreen from './components/LoadingScreen.jsx';
+import LoginGate from './components/LoginGate.jsx';
 import ChatLayout from './components/ChatLayout.jsx';
 import { canSendNow } from './utils/rateLimit.js';
 import { attachmentsToPromptContext, hasImageAttachment } from './utils/fileReader.js';
@@ -56,8 +57,30 @@ function helpText() {
   ].join('\n');
 }
 
+function trimHistoryForPrompt(messages = [], maxMessages = 10, maxChars = APP_CONFIG.limits.maxContextChars) {
+  const relevant = [...messages]
+    .filter((message) => !message.loading && (message.role === 'user' || message.role === 'assistant'))
+    .slice(-maxMessages)
+    .map((message) => ({
+      role: message.role,
+      content: clampText(message.content || '', 1200),
+      createdAt: message.createdAt
+    }));
+
+  let used = 0;
+  const trimmed = [];
+  for (const item of [...relevant].reverse()) {
+    const cost = item.content.length + 24;
+    if (used + cost > maxChars) break;
+    used += cost;
+    trimmed.unshift(item);
+  }
+  return trimmed;
+}
+
 export default function App() {
   const [loading, setLoading] = useState(true);
+  const [hasAccess, setHasAccess] = useState(() => !APP_CONFIG.accessGate.enabled || window.localStorage.getItem(APP_CONFIG.accessGate.storageKey) === 'true');
   const [sessionId] = useState(() => getSessionId());
   const [chats, setChats] = useState([]);
   const [activeChatId, setActiveChatId] = useState(null);
@@ -251,11 +274,17 @@ export default function App() {
     return true;
   }, [activeChat, appendAssistant, changeModel, newChat, persistChat]);
 
-  const sendToApi = useCallback(async ({ text, chatId, currentModel, currentAttachments }) => {
+  const sendToApi = useCallback(async ({ text, chatId, currentModel, currentAttachments, history }) => {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, model: currentModel, chatId, attachments: currentAttachments.map(({ preview, content, ...safe }) => safe) })
+      body: JSON.stringify({
+        message: text,
+        model: currentModel,
+        chatId,
+        history,
+        attachments: currentAttachments.map(({ preview, content, ...safe }) => safe)
+      })
     });
 
     const data = await response.json().catch(() => null);
@@ -314,7 +343,8 @@ export default function App() {
         text: finalPrompt,
         chatId: chatWithUser.id,
         currentModel: model,
-        currentAttachments
+        currentAttachments,
+        history: trimHistoryForPrompt(chatBase.messages)
       });
 
       const reply = data.reply || (data.success ? 'DRAK-GPT sudah merespons, tapi isi jawaban kosong.' : 'DRAK-GPT lagi susah konek ke provider. Coba ulangi sebentar lagi.');
@@ -340,7 +370,14 @@ export default function App() {
     await sendMessage(lastUser.content);
   }, [activeChat, sendMessage]);
 
+  const logoutAccessGate = useCallback(() => {
+    window.localStorage.removeItem(APP_CONFIG.accessGate.storageKey);
+    setSidebarOpen(false);
+    setHasAccess(false);
+  }, []);
+
   if (loading) return <LoadingScreen onDone={() => setLoading(false)} />;
+  if (!hasAccess) return <LoginGate onUnlock={() => setHasAccess(true)} />;
 
   return (
     <ChatLayout
@@ -355,6 +392,7 @@ export default function App() {
       onDeleteChat={removeChat}
       onRenameChat={renameChat}
       onClearAll={clearAll}
+      onLogout={logoutAccessGate}
       themeId={themeId}
       onThemeChange={setThemeId}
       online={online}

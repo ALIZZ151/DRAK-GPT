@@ -1,4 +1,8 @@
+import { APP_CONFIG, DRAK_SYSTEM_PROMPT, MODEL_INSTRUCTIONS } from '../src/database.js';
+
 const MAX_MESSAGE_LENGTH = 8000;
+const MAX_CONTEXT_CHARS = 7800;
+const MAX_FINAL_PROMPT_CHARS = 14000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT = 22;
 const TIMEOUT_MS = 15_000;
@@ -92,6 +96,11 @@ function sanitizeMessage(message) {
   return String(message || '').replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim();
 }
 
+function clampText(text, max) {
+  const clean = sanitizeMessage(text);
+  return clean.length > max ? `${clean.slice(0, max)}\n...[dipotong biar prompt tetap aman]` : clean;
+}
+
 function parseJsonSafe(text) {
   try {
     return JSON.parse(text);
@@ -137,14 +146,94 @@ function parseGeneric(payload) {
   };
 }
 
-async function callProvider(provider, message) {
+function trimHistoryForPrompt(history = [], maxChars = MAX_CONTEXT_CHARS) {
+  const safeHistory = Array.isArray(history) ? history : [];
+  const rows = safeHistory
+    .filter((item) => item && (item.role === 'user' || item.role === 'assistant'))
+    .slice(-10)
+    .map((item) => {
+      const label = item.role === 'assistant' ? 'DRAK-GPT' : 'User';
+      return `${label}: ${clampText(item.content || '', 1200)}`;
+    });
+
+  const picked = [];
+  let used = 0;
+  for (const row of [...rows].reverse()) {
+    if (used + row.length + 1 > maxChars) break;
+    picked.unshift(row);
+    used += row.length + 1;
+  }
+  return picked.join('\n');
+}
+
+function getModeInstruction(model) {
+  return MODEL_INSTRUCTIONS[model] || MODEL_INSTRUCTIONS.instant;
+}
+
+function buildPrompt({ systemPrompt, history, userMessage, model }) {
+  const context = trimHistoryForPrompt(history);
+  const sections = [
+    '[IDENTITAS AI]',
+    systemPrompt,
+    '',
+    '[MODE AKTIF]',
+    getModeInstruction(model),
+    '',
+    '[ANTI HALUSINASI]',
+    'Jangan mengarang. Kalau data kurang, bilang data kurang. Kalau tidak tahu, bilang tidak tahu. Jawab sesuai konteks chat. Jangan sok yakin kalau belum pasti.',
+    '',
+    '[KONTEKS CHAT TERAKHIR]',
+    context || 'Belum ada konteks sebelumnya.',
+    '',
+    '[PESAN USER]',
+    clampText(userMessage, MAX_MESSAGE_LENGTH + 12_000),
+    '',
+    '[ARAHAN OUTPUT]',
+    'Balas sebagai DRAK-GPT dalam bahasa Indonesia santai. Tetap tajam, berguna, dan jangan ngawur.'
+  ];
+
+  const prompt = sections.join('\n');
+  return prompt.length > MAX_FINAL_PROMPT_CHARS
+    ? `${prompt.slice(0, MAX_FINAL_PROMPT_CHARS)}\n...[konteks dipotong otomatis]`
+    : prompt;
+}
+
+function cleanReply(rawReply) {
+  let reply = sanitizeMessage(rawReply)
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+
+  if (!reply) {
+    return 'Provider-nya ngasih jawaban kosong, Bos. Coba ulangi, ini API-nya lagi bengong.';
+  }
+
+  const formalStarts = [
+    /^Baik, saya akan membantu Anda dengan senang hati[,.!]?\s*/i,
+    /^Sebagai (sebuah )?(model )?AI[^,.]*[,.]?\s*/i,
+    /^Mohon maaf sebesar-besarnya[,.]?\s*/i
+  ];
+
+  for (const pattern of formalStarts) {
+    reply = reply.replace(pattern, '');
+  }
+
+  if (!reply.trim()) {
+    return 'Provider-nya ngasih jawaban kosong, Bos. Coba ulangi, ini API-nya lagi bengong.';
+  }
+
+  return reply.trim();
+}
+
+async function callProvider(provider, finalPrompt) {
   if (provider.enabled === false) throw new Error('Provider belum aktif');
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
   const started = Date.now();
   try {
-    const encoded = encodeURIComponent(message);
+    const encoded = encodeURIComponent(finalPrompt);
     const url = provider.url.replace('{text}', encoded);
     const fetchOptions = {
       method: provider.method,
@@ -154,11 +243,10 @@ async function callProvider(provider, message) {
 
     if (provider.method === 'POST') {
       fetchOptions.headers['Content-Type'] = 'application/json';
-      fetchOptions.body = JSON.stringify({ message });
+      fetchOptions.body = JSON.stringify({ message: finalPrompt, text: finalPrompt });
     }
 
-    // Beberapa API publik menolak request tanpa User-Agent. Header ini aman karena berjalan di serverless proxy.
-    fetchOptions.headers['User-Agent'] = 'DRAK-GPT/1.0 (+https://vercel.app)';
+    fetchOptions.headers['User-Agent'] = 'DRAK-GPT/1.1 (+https://vercel.app)';
 
     const response = await fetch(url, fetchOptions);
     const raw = await response.text();
@@ -167,6 +255,7 @@ async function callProvider(provider, message) {
     const parsed = provider.parser(payload);
     return {
       ...parsed,
+      reply: cleanReply(parsed.reply),
       responseTime: parsed.responseTime || `${Date.now() - started}ms`
     };
   } finally {
@@ -194,6 +283,7 @@ export default async function handler(req, res) {
   const message = sanitizeMessage(body.message);
   const model = MODELS[body.model] ? body.model : 'instant';
   const chatId = sanitizeMessage(body.chatId || '');
+  const history = Array.isArray(body.history) ? body.history : [];
 
   if (!message) {
     return json(res, 400, {
@@ -211,6 +301,13 @@ export default async function handler(req, res) {
     });
   }
 
+  const finalPrompt = buildPrompt({
+    systemPrompt: APP_CONFIG.systemPrompt || DRAK_SYSTEM_PROMPT,
+    history,
+    userMessage: message,
+    model
+  });
+
   const chain = MODELS[model];
   const errors = [];
 
@@ -218,7 +315,7 @@ export default async function handler(req, res) {
     const provider = PROVIDERS[providerId];
     if (!provider) continue;
     try {
-      const result = await callProvider(provider, message);
+      const result = await callProvider(provider, finalPrompt);
       return json(res, 200, {
         success: true,
         model,
