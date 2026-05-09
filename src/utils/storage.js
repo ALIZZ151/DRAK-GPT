@@ -1,5 +1,5 @@
 import { APP_CONFIG } from '../database.js';
-import { getFirebaseConfig, isFirebaseReady } from '../firebase.js';
+import { ensureFirebaseAuth, getFirebaseAuthHeader, getFirebaseConfig, getFirebaseStatus, isFirebaseReady } from '../firebase.js';
 import { createId } from './sanitize.js';
 
 const PREFIX = APP_CONFIG.app.storagePrefix;
@@ -23,48 +23,79 @@ function localGetChats() {
   return safeParse(localStorage.getItem(KEYS.chats), []);
 }
 
-function slimAttachment(attachment) {
-  if (!attachment || typeof attachment !== 'object') return attachment;
-  if (attachment.kind !== 'image' && attachment.type !== 'image') return attachment;
-  const dataUrl = attachment.thumbnailUrl || attachment.dataUrl || attachment.previewUrl || attachment.preview || '';
-  return {
-    ...attachment,
-    // Simpan dataUrl kecil hasil kompres. Kalau terlalu besar, simpan metadata saja biar localStorage gak jebol.
-    dataUrl: dataUrl.length <= 950_000 ? dataUrl : '',
-    previewUrl: dataUrl.length <= 950_000 ? dataUrl : '',
-    preview: dataUrl.length <= 950_000 ? dataUrl : '',
-    thumbnailUrl: dataUrl.length <= 950_000 ? dataUrl : ''
-  };
-}
-
-function slimChatsForStorage(chats) {
-  return chats.map((chat) => ({
-    ...chat,
-    messages: (chat.messages || []).map((message) => ({
-      ...message,
-      attachments: (message.attachments || []).map(slimAttachment)
-    }))
-  }));
-}
-
 function localSetChats(chats) {
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(KEYS.chats, JSON.stringify(chats));
   } catch {
-    localStorage.setItem(KEYS.chats, JSON.stringify(slimChatsForStorage(chats).slice(0, 25)));
+    localStorage.setItem(KEYS.chats, JSON.stringify(slimChatsForLocal(chats).slice(0, 25)));
   }
 }
 
-function firestoreBase(sessionId) {
-  const config = getFirebaseConfig();
-  return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(config.projectId)}/databases/(default)/documents/users/${encodeURIComponent(sessionId)}/chats`;
+function dataUrlBudget(url, maxChars) {
+  return typeof url === 'string' && url.length <= maxChars ? url : '';
 }
 
-function firestoreUrl(sessionId, chatId = '') {
+function slimAttachment(attachment, maxChars = 950_000) {
+  if (!attachment || typeof attachment !== 'object') return attachment;
+  if (attachment.kind !== 'image' && attachment.type !== 'image') return attachment;
+
+  const bestPreview = attachment.thumbnailUrl || attachment.dataUrl || attachment.previewUrl || attachment.preview || '';
+  const safePreview = dataUrlBudget(bestPreview, maxChars);
+
+  return {
+    id: attachment.id,
+    kind: attachment.kind || 'image',
+    type: attachment.type || 'image',
+    name: attachment.name || 'image.jpg',
+    mime: attachment.mime || 'image/jpeg',
+    size: Number(attachment.size || 0),
+    width: Number(attachment.width || 0),
+    height: Number(attachment.height || 0),
+    compressed: Boolean(attachment.compressed),
+    createdAt: attachment.createdAt || new Date().toISOString(),
+    dataUrl: safePreview,
+    previewUrl: safePreview,
+    preview: safePreview,
+    thumbnailUrl: safePreview
+  };
+}
+
+function slimChatsForLocal(chats) {
+  return chats.map((chat) => ({
+    ...chat,
+    messages: (chat.messages || []).map((message) => ({
+      ...message,
+      attachments: (message.attachments || []).map((attachment) => slimAttachment(attachment, 950_000))
+    }))
+  }));
+}
+
+function slimChatForCloud(chat) {
+  return {
+    ...chat,
+    messages: (chat.messages || []).map((message) => ({
+      ...message,
+      // Firestore document limit ±1MiB. Simpan thumbnail kecil/metadata agar sync tidak mental gara-gara foto gede.
+      attachments: (message.attachments || []).map((attachment) => slimAttachment(attachment, 260_000))
+    }))
+  };
+}
+
+async function getRemoteUserId(fallbackSessionId) {
+  const auth = await ensureFirebaseAuth();
+  return auth?.localId || fallbackSessionId;
+}
+
+function firestoreBase(userId) {
+  const config = getFirebaseConfig();
+  return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(config.projectId)}/databases/(default)/documents/users/${encodeURIComponent(userId)}/chats`;
+}
+
+function firestoreUrl(userId, chatId = '') {
   const config = getFirebaseConfig();
   const suffix = chatId ? `/${encodeURIComponent(chatId)}` : '';
-  return `${firestoreBase(sessionId)}${suffix}?key=${encodeURIComponent(config.apiKey)}`;
+  return `${firestoreBase(userId)}${suffix}?key=${encodeURIComponent(config.apiKey)}`;
 }
 
 function toFirestoreValue(value) {
@@ -99,7 +130,7 @@ function fromFirestoreValue(value) {
 
 function chatToFirestore(chat) {
   return {
-    fields: Object.fromEntries(Object.entries(chat).map(([key, value]) => [key, toFirestoreValue(value)]))
+    fields: Object.fromEntries(Object.entries(slimChatForCloud(chat)).map(([key, value]) => [key, toFirestoreValue(value)]))
   };
 }
 
@@ -108,15 +139,28 @@ function chatFromFirestore(document) {
   return Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, fromFirestoreValue(value)]));
 }
 
+async function remoteFetch(url, options = {}) {
+  const authHeader = await getFirebaseAuthHeader();
+  return fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      ...authHeader
+    }
+  });
+}
+
 async function remoteListChats(sessionId) {
-  const response = await fetch(firestoreUrl(sessionId));
+  const userId = await getRemoteUserId(sessionId);
+  const response = await remoteFetch(firestoreUrl(userId));
   if (!response.ok) throw new Error(`Firestore list ${response.status}`);
   const data = await response.json();
   return (data.documents || []).map(chatFromFirestore).filter((chat) => chat.id);
 }
 
 async function remoteSaveChat(sessionId, chat) {
-  const response = await fetch(firestoreUrl(sessionId, chat.id), {
+  const userId = await getRemoteUserId(sessionId);
+  const response = await remoteFetch(firestoreUrl(userId, chat.id), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(chatToFirestore(chat))
@@ -125,8 +169,17 @@ async function remoteSaveChat(sessionId, chat) {
 }
 
 async function remoteDeleteChat(sessionId, chatId) {
-  const response = await fetch(firestoreUrl(sessionId, chatId), { method: 'DELETE' });
+  const userId = await getRemoteUserId(sessionId);
+  const response = await remoteFetch(firestoreUrl(userId, chatId), { method: 'DELETE' });
   if (!response.ok && response.status !== 404) throw new Error(`Firestore delete ${response.status}`);
+}
+
+async function uploadLocalChatsToRemote(sessionId, chats) {
+  if (!isFirebaseReady() || !chats.length) return;
+  const batch = chats.slice(0, 30);
+  await Promise.all(batch.map((chat) => remoteSaveChat(sessionId, chat).catch((error) => {
+    console.warn('Firebase migration skipped one chat:', error.message);
+  })));
 }
 
 export function getSessionId() {
@@ -140,7 +193,10 @@ export function getSessionId() {
 }
 
 export function getStorageMode() {
-  return isFirebaseReady() ? 'Firebase Sync' : 'Local Session';
+  const status = getFirebaseStatus();
+  if (!status.ready) return 'Local Session';
+  if (status.authCached) return 'Firebase Sync';
+  return 'Firebase Ready';
 }
 
 export async function loadChats(sessionId = getSessionId()) {
@@ -151,14 +207,30 @@ export async function loadChats(sessionId = getSessionId()) {
     const remoteChats = await remoteListChats(sessionId);
     const sorted = remoteChats.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
     if (sorted.length) {
-      localSetChats(sorted);
-      return sorted;
+      const merged = mergeChats(localChats, sorted);
+      localSetChats(merged);
+      if (localChats.length > sorted.length) await uploadLocalChatsToRemote(sessionId, merged);
+      return merged;
     }
+
+    // Pertama kali Firebase aktif: dorong riwayat local lama ke Firestore biar user gak kehilangan history.
+    if (localChats.length) await uploadLocalChatsToRemote(sessionId, localChats);
     return localChats;
   } catch (error) {
-    console.warn('Firebase REST load failed, using localStorage:', error.message);
+    console.warn('Firebase sync load failed, using localStorage:', error.message);
     return localChats;
   }
+}
+
+function mergeChats(localChats, remoteChats) {
+  const map = new Map();
+  for (const chat of [...remoteChats, ...localChats]) {
+    const old = map.get(chat.id);
+    if (!old || new Date(chat.updatedAt || 0) > new Date(old.updatedAt || 0)) {
+      map.set(chat.id, chat);
+    }
+  }
+  return [...map.values()].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
 }
 
 export async function saveChat(chat, sessionId = getSessionId()) {
@@ -172,7 +244,7 @@ export async function saveChat(chat, sessionId = getSessionId()) {
     try {
       await remoteSaveChat(sessionId, chat);
     } catch (error) {
-      console.warn('Firebase REST save failed, kept in localStorage:', error.message);
+      console.warn('Firebase sync save failed, kept in localStorage:', error.message);
     }
   }
   return next;
@@ -185,7 +257,7 @@ export async function deleteChat(chatId, sessionId = getSessionId()) {
     try {
       await remoteDeleteChat(sessionId, chatId);
     } catch (error) {
-      console.warn('Firebase REST delete failed:', error.message);
+      console.warn('Firebase sync delete failed:', error.message);
     }
   }
   return next;

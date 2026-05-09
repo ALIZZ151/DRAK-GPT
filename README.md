@@ -127,12 +127,42 @@ npm run preview
 
 DRAK-GPT tetap jalan tanpa Firebase. Kalau env Firebase belum diisi, mode otomatis menjadi **Local Session**.
 
-Untuk mengaktifkan Firestore sync:
+Versi ini sudah ditambah Firebase sync yang lebih aman:
+
+- Firestore untuk riwayat chat.
+- Firebase Anonymous Auth via REST API, jadi tidak perlu dependency Firebase SDK besar.
+- LocalStorage tetap jadi fallback kalau Firebase belum aktif/error.
+- Riwayat local lama otomatis dicoba sync ke Firestore saat Firebase pertama kali aktif.
+- Attachment gambar disimpan versi ringan agar Firestore tidak jebol ukuran dokumen.
+
+File bantuan lengkap ada di:
+
+```txt
+FIREBASE_SETUP.md
+firestore.rules
+```
+
+Langkah cepat:
 
 1. Buat project Firebase.
-2. Aktifkan Firestore Database.
-3. Ambil Firebase web config.
-4. Isi environment variables di Vercel berdasarkan `.env.example`:
+2. Tambah Web App dan ambil Firebase web config.
+3. Aktifkan **Authentication → Anonymous**.
+4. Aktifkan **Firestore Database**.
+5. Pasang rules dari `firestore.rules`:
+
+```txt
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}
+```
+
+6. Isi Environment Variables di Vercel berdasarkan `.env.example`:
 
 ```env
 VITE_FIREBASE_API_KEY=
@@ -143,12 +173,18 @@ VITE_FIREBASE_MESSAGING_SENDER_ID=
 VITE_FIREBASE_APP_ID=
 ```
 
-5. Deploy ulang.
+7. Deploy ulang.
+
+Status di sidebar:
+
+- **Local Session**: Firebase belum aktif / env belum lengkap.
+- **Firebase Ready**: env lengkap, auth akan dibuat saat sync pertama.
+- **Firebase Sync**: riwayat chat sudah memakai Firestore + Anonymous Auth.
 
 Data chat disimpan dengan pola:
 
 ```txt
-users/{sessionId}/chats/{chatId}
+users/{firebaseAnonymousUid}/chats/{chatId}
 ```
 
 Struktur chat:
@@ -171,6 +207,8 @@ Struktur chat:
   ]
 }
 ```
+
+Catatan keamanan: Firebase web config boleh dipakai di frontend, tapi **service account/admin key jangan pernah dimasukin ke GitHub**. Jangan pakai rules `allow read, write: if true` untuk web yang mau dipost.
 
 ## Cara Ganti API Provider
 
