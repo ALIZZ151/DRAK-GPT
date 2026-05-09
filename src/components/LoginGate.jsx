@@ -8,13 +8,16 @@ export default function LoginGate({ onUnlock }) {
   const [error, setError] = useState('');
 
   const canSubmit = accessKey.trim() && password.trim();
+  const owner = APP_CONFIG.owner;
+  const whatsapp = owner.whatsappUrl || `https://wa.me/${String(owner.whatsapp || '').replace(/\D/g, '')}`;
+  const telegram = owner.telegramUrl || `https://t.me/${String(owner.telegram || '').replace('@', '')}`;
 
   function submit(event) {
     event.preventDefault();
     const gate = APP_CONFIG.accessGate;
     const valid = accessKey.trim() === gate.key && password === gate.password;
     if (!valid) {
-      setError('Key atau password salah, Bos.');
+      setError('Key atau password salah, Bos. Cek lagi, jangan asal gebrak keyboard.');
       return;
     }
     setError('');
@@ -66,7 +69,16 @@ export default function LoginGate({ onUnlock }) {
         {error ? <p className="access-error" role="alert">{error}</p> : <p className="access-note">Demo access gate only, bukan keamanan server asli.</p>}
 
         <button className="access-submit" type="submit" disabled={!canSubmit}>Masuk</button>
-        <footer>Created by Dev ALIZZ</footer>
+
+        <div className="access-help-card">
+          <span>Need help? Chat {owner.name}</span>
+          <div>
+            <a href={whatsapp} target="_blank" rel="noreferrer">WhatsApp Owner</a>
+            <a href={telegram} target="_blank" rel="noreferrer">Telegram Owner</a>
+          </div>
+        </div>
+
+        <footer>Created by Dev ALIZZ · {APP_CONFIG.owner.website}</footer>
       </form>
     </main>
   );

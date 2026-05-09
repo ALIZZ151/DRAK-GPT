@@ -293,6 +293,10 @@ export default function App() {
           name: attachment.name,
           mime: attachment.mime || attachment.type,
           size: attachment.size,
+          width: attachment.width,
+          height: attachment.height,
+          compressed: attachment.compressed,
+          thumbnailUrl: attachment.thumbnailUrl,
           dataUrl: attachment.dataUrl || attachment.previewUrl || (attachment.kind === 'image' ? attachment.preview : undefined)
         }))
       })
@@ -349,7 +353,7 @@ export default function App() {
         history: trimHistoryForPrompt(chatBase.messages)
       });
 
-      const reply = data.reply || 'Provider AI lagi susah diajak kerja sama, Bos. Coba kirim ulang sebentar lagi.';
+      const reply = data.reply || `Provider AI lagi ngambek, Bos. Coba ulang bentar lagi.\n\nKalau error terus, chat ${APP_CONFIG.owner.name}: ${APP_CONFIG.owner.whatsappUrl}`;
       await persistChat({
         ...chatWithUser,
         updatedAt: new Date().toISOString(),
@@ -359,7 +363,7 @@ export default function App() {
       await persistChat({
         ...chatWithUser,
         updatedAt: new Date().toISOString(),
-        messages: chatWithUser.messages.map((message) => message.id === loadingMessage.id ? makeMessage('assistant', 'DRAK-GPT lagi susah konek ke provider. Coba ulangi sebentar lagi.\n\nKalau error terus, hubungi owner.', { error: true }) : message)
+        messages: chatWithUser.messages.map((message) => message.id === loadingMessage.id ? makeMessage('assistant', `DRAK-GPT lagi susah konek ke provider. Coba ulangi sebentar lagi.\n\nKalau error terus, chat ${APP_CONFIG.owner.name}: ${APP_CONFIG.owner.whatsappUrl}`, { error: true }) : message)
       });
     }
   }, [activeChat, attachments, handleCommand, model, online, persistChat, sendToApi, showNotice]);

@@ -4,7 +4,7 @@ export default function FilePreview({ attachments = [], onRemove }) {
   return (
     <div className="file-preview-list" aria-label="Lampiran aktif">
       {attachments.map((item) => (
-        <article className="file-preview" key={item.id}>
+        <article className={`file-preview ${item.compressed ? 'compressed' : ''}`} data-compressed={item.compressed ? 'true' : 'false'} key={item.id}>
           {item.kind === 'image' ? (
             <img src={(item.preview || item.previewUrl || item.dataUrl)} alt={item.name} />
           ) : (

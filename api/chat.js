@@ -26,6 +26,9 @@ const MODEL_CHAINS = {
 
 const INTENT_CHAINS = {
   coding: ['nexray-heck', 'nexray-copilot', 'nexray-deepseek', 'nexray-gemini', 'nexray-openai', 'lexcode'],
+  error_debugging: ['nexray-heck', 'nexray-deepseek', 'nexray-gemini', 'nexray-openai', 'nexray-copilot'],
+  prompt_making: ['nexray-gemini', 'nexray-openai', 'nexray-heck', 'nexray-gpt35'],
+  long_text_analysis: ['nexray-gemini', 'nexray-openai', 'nexray-heck', 'nexray-gpt35'],
   math: ['nexray-mathgpt', 'nexray-gemini', 'nexray-openai', 'lexcode'],
   muslim: ['nexray-muslim', 'nexray-gemini', 'nexray-openai'],
   image_or_visual: ['nexray-veo2', 'nexray-gemini', 'nexray-openai'],
@@ -103,11 +106,19 @@ function isHtmlError(text = '') {
   return value.startsWith('<!doctype html') || value.startsWith('<html') || /cloudflare|cf-ray|access denied|attention required/.test(value);
 }
 
+function isLowValueDataKurang(reply = '') {
+  const value = sanitizeMessage(reply).toLowerCase().replace(/[.!?,]+$/g, '').trim();
+  if (!value) return false;
+  const dataKurang = /(maaf[,\s]*)?data (lu |kamu |anda )?(kurang|tidak cukup)|detail(nya)? masih kurang|informasi (kurang|tidak cukup)|butuh data lebih/i.test(value);
+  return dataKurang && value.length < 180;
+}
+
 function isBadReply(reply = '') {
   const value = sanitizeMessage(reply).toLowerCase();
   if (!value) return true;
   if (value.length < 2) return true;
   if (isHtmlError(value)) return true;
+  if (isLowValueDataKurang(value)) return true;
   const exactBad = new Set(['undefined', 'null', 'false', 'nan', '{}', '[]', '[object object]']);
   if (exactBad.has(value)) return true;
   return /jawaban kosong|diblokir server|blocked|forbidden|bad gateway|server error|service unavailable|gateway timeout|rate limit exceeded|too many requests|internal server error|cannot get\s+\//i.test(value);
@@ -221,6 +232,9 @@ function normalizeAttachments(attachments = []) {
       name,
       mime,
       size,
+      width: Number(item?.width || 0),
+      height: Number(item?.height || 0),
+      compressed: Boolean(item?.compressed),
       hasDataUrl: Boolean(dataUrl),
       dataUrl: dataUrl && dataUrl.length <= MAX_ATTACHMENT_SIZE * 1.5 ? dataUrl : ''
     };
@@ -239,33 +253,34 @@ function attachmentSummary(attachments = []) {
   if (!attachments.length) return '';
   return attachments.map((item) => {
     const size = item.size ? `${Math.ceil(item.size / 1024)}KB` : 'size unknown';
-    if (item.type === 'image') return `- User mengirim gambar: ${item.name} (${item.mime || 'image'}, ${size}). Vision endpoint belum aktif kecuali provider vision khusus tersedia.`;
+    if (item.type === 'image') return `- User mengirim gambar: ${item.name} (${item.mime || 'image'}, ${size}${item.width && item.height ? `, ${item.width}x${item.height}` : ''}${item.compressed ? ', sudah dikompres' : ''}). Vision endpoint belum aktif kecuali provider vision khusus tersedia.`;
     return `- User mengirim file: ${item.name} (${item.mime || item.type || 'file'}, ${size}).`;
   }).join('\n');
 }
 
 function wantsImageGeneration(message = '') {
   const text = String(message).toLowerCase().trim();
-  return /^\/image\b/.test(text) || /\b(generate|buat|bikin|buatkan)\s+(gambar|image|visual|foto|poster|logo|video|anime|thumbnail)\b/i.test(text) || /\b(gambar|image|visual|video)\s+(dari prompt|pakai prompt)\b/i.test(text);
-}
-
-function wantsImageReading(message = '') {
-  const text = String(message).toLowerCase();
-  return /(ini gambar apa|gambar ini apa|foto ini apa|apakah kamu kenal|kenal ini gambar|jelaskan foto|jelaskan gambar|baca gambar|analisis gambar|analisa gambar|lihat gambar|isi gambar|objek di gambar|tolong analisis gambar)/i.test(text);
+  return /^\/image\b/.test(text)
+    || /^\/gambar\b/.test(text)
+    || /\b(generate|buat|bikin|buatkan)\s+(gambar|image|visual|foto|poster|logo|video|anime|thumbnail)\b/i.test(text)
+    || /\b(gambar|image|visual|video)\s+(dari prompt|pakai prompt)\b/i.test(text);
 }
 
 function detectIntent(message = '', attachments = []) {
-  const text = String(message).toLowerCase();
+  const text = String(message || '').toLowerCase();
   const imageAttached = hasImageAttachment(attachments);
+  const longTextThreshold = APP_CONFIG.limits.longTextThreshold || 2500;
 
   if (imageAttached && !wantsImageGeneration(text)) return 'vision_image_question';
   if (wantsImageGeneration(text)) return 'image_or_visual';
-
   if (/(lagu|musik|music|audio|suno|beat|instrumental|nyanyi|lirik|melodi|song)/i.test(text)) return 'music_or_audio';
-  if (/(buat|bikin|fix|perbaiki|debug|source\s*code|full\s*code|kode lengkap|script|coding|website|web|bot|api|deploy|vercel|firebase|react|javascript|node\.?js|python|php|html|css|error|stack trace|console|npm|package\.json|vite|express|database|sql|firestore)/i.test(text)) return 'coding';
   if (/(matematika|math|hitung|rumus|aljabar|kalkulus|persamaan|integral|turunan|statistik|probabilitas|geometri|trigonometri)/i.test(text)) return 'math';
   if (/(islam|muslim|doa|hadits|hadis|quran|alquran|sholat|salat|zakat|puasa|ramadhan|fiqih|ustadz)/i.test(text)) return 'muslim';
-  if (/(analisis|analyze|kenapa|mengapa|jelaskan detail|bedah|strategi|rencana|logic|logika)/i.test(text)) return 'thinking';
+  if (/(fix error|perbaiki error|debug|error log|stack trace|console error|npm error|build error|deploy error|vercel error|firebase error|uncaught|exception|syntaxerror|referenceerror|typeerror)/i.test(text)) return 'error_debugging';
+  if (/(buatkan? prompt|bikin prompt|prompt update|prompt coding|prompt ai|prompt website|prompt yang kekunci)/i.test(text)) return 'prompt_making';
+  if (/(buatkan?|buat|bikin|full\s*code|kode lengkap|source\s*code|script|coding|website|web app|landing page|bot|api|html|css|javascript|typescript|node\.?js|react|vite|python|php|express|database|sql|firestore|vercel|firebase).{0,40}(kode|script|web|website|bot|api|app|html|css|javascript|python|react|node|php|deploy|firebase|vercel)|\b(kode lengkap|source code|full code|html css js|react component)\b/i.test(text)) return 'coding';
+  if (sanitizeMessage(message).length > longTextThreshold) return 'long_text_analysis';
+  if (/(analisis|analyze|kenapa|mengapa|jelaskan detail|bedah|strategi|rencana|logic|logika|rangkum|ringkas|summarize)/i.test(text)) return 'thinking';
   return 'general_chat';
 }
 
@@ -316,7 +331,7 @@ function uniqueChain(ids = []) {
 function getProviderChain(model, intent) {
   const intentChain = INTENT_CHAINS[intent] || [];
   const modelChain = MODEL_CHAINS[model] || MODEL_CHAINS.instant;
-  if (['coding', 'math', 'muslim', 'image_or_visual', 'music_or_audio'].includes(intent)) {
+  if (['coding', 'error_debugging', 'prompt_making', 'long_text_analysis', 'math', 'muslim', 'image_or_visual', 'music_or_audio'].includes(intent)) {
     return uniqueChain([...intentChain, ...modelChain, ...INTENT_CHAINS.general_chat]).slice(0, MAX_PROVIDER_ATTEMPTS);
   }
   return uniqueChain([...modelChain, ...intentChain, ...INTENT_CHAINS.general_chat]).slice(0, MAX_PROVIDER_ATTEMPTS);
@@ -350,7 +365,9 @@ function trimHistoryForFullPrompt(history = [], maxChars = 1800) {
 
 function getModeInstruction(model, intent, compact = false) {
   if (compact) {
-    if (intent === 'coding' || model === 'coding') return 'Mode Coding: analisis singkat, beri kode lengkap kalau diminta, code block rapi, cara run singkat, jangan hardcode secret.';
+    if (intent === 'coding' || intent === 'error_debugging' || model === 'coding') return 'Mode Coding: analisis singkat, beri kode lengkap kalau diminta, code block rapi, cara run singkat, jangan hardcode secret.';
+    if (intent === 'prompt_making') return 'Mode Prompt: buat prompt rapi, terkunci, detail, dan anti-halusinasi.';
+    if (intent === 'long_text_analysis') return 'Mode Text Panjang: rangkum/analisis isi text, jangan jawab data kurang.';
     if (intent === 'math') return 'Mode Math: hitung bertahap, jangan asal jawab kalau data kurang.';
     if (intent === 'muslim') return 'Mode Muslim: hati-hati, jangan mengarang dalil.';
     if (model === 'pro') return 'Mode Pro: jawaban matang, relevan, tetap hemat kata.';
@@ -358,7 +375,9 @@ function getModeInstruction(model, intent, compact = false) {
     return 'Mode Instant: cepat, ringkas, langsung ke inti.';
   }
   const base = MODEL_INSTRUCTIONS[model] || MODEL_INSTRUCTIONS.instant;
-  if (intent === 'coding' && model !== 'coding') return `${base}\n\n[MODE AUTO: CODING]\n${MODEL_INSTRUCTIONS.coding}`;
+  if ((intent === 'coding' || intent === 'error_debugging') && model !== 'coding') return `${base}\n\n[MODE AUTO: CODING]\n${MODEL_INSTRUCTIONS.coding}`;
+  if (intent === 'prompt_making') return `${base}\n\n[MODE AUTO: PROMPT]\nBuat prompt rapi, lengkap, ada lock/aturan, dan jangan liar.`;
+  if (intent === 'long_text_analysis') return `${base}\n\n[MODE AUTO: TEXT PANJANG]\nUser memberi text panjang. Analisis/rangkum bagian penting dan jawab instruksi user. Jangan jawab data kurang.`;
   if (intent === 'math') return `${base}\n\n[MODE AUTO: MATH]\nJawab perhitungan dengan langkah jelas. Jangan sok yakin kalau datanya kurang.`;
   if (intent === 'muslim') return `${base}\n\n[MODE AUTO: MUSLIM]\nJawab hati-hati. Kalau perkara agama butuh rujukan kuat dan kamu tidak yakin, bilang belum bisa pastiin.`;
   if (intent === 'image_or_visual') return `${base}\n\n[MODE AUTO: VISUAL]\nKalau provider visual tidak mengembalikan URL/media valid, jangan klaim gambar/video berhasil dibuat.`;
@@ -371,25 +390,54 @@ function trimForGetPrompt(text, maxLength = GET_PROMPT_LIMIT) {
   return clean.length > maxLength ? `${clean.slice(0, maxLength)}\n...[prompt dipotong biar API GET gak ngambek]` : clean;
 }
 
+function extractImportantLines(text = '', maxChars = 620) {
+  const keywords = /(error|failed|gagal|todo|target|masalah|fix|perbaiki|request|instruksi|wajib|lock|hasil|expected|actual|build|deploy|api|kode|script|prompt)/i;
+  const lines = sanitizeMessage(text).split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const picked = [];
+  for (const line of lines) {
+    if (keywords.test(line)) picked.push(line.slice(0, 220));
+    if (picked.join('\n').length >= maxChars) break;
+  }
+  return picked.join('\n').slice(0, maxChars);
+}
+
+function prepareLongTextPrompt(message = '', maxChars = 1200) {
+  const clean = sanitizeMessage(message).replace(/[ \t]+/g, ' ');
+  const threshold = APP_CONFIG.limits.longTextThreshold || 2500;
+  if (clean.length <= threshold) return clampText(clean, maxChars);
+
+  const head = clean.slice(0, Math.floor(maxChars * 0.46));
+  const tail = clean.slice(-Math.floor(maxChars * 0.32));
+  const important = extractImportantLines(clean, Math.floor(maxChars * 0.22));
+  return [
+    'User mengirim text panjang. Tugas kamu: analisis inti text ini dan jawab sesuai permintaan user. Jangan bilang data kurang hanya karena text panjang.',
+    '[AWAL TEXT]',
+    head,
+    important ? '[BAGIAN PENTING TERDETEKSI]\n' + important : '',
+    '[AKHIR TEXT]',
+    tail
+  ].filter(Boolean).join('\n');
+}
+
 function buildCompactPrompt({ history, userMessage, model, intent, attachments, forceIndonesian = false }) {
   const languageRule = isIndonesianInput(userMessage) || forceIndonesian
     ? 'Jawab WAJIB bahasa Indonesia gaul/tongkrongan. Jangan Inggris kecuali user minta. Istilah coding tetap original.'
     : 'Jawab pakai bahasa yang sama dengan user.';
 
-  const codingRule = intent === 'coding'
+  const codingRule = (intent === 'coding' || intent === 'error_debugging')
     ? 'Kalau user minta coding/script/kode lengkap, beri solusi lengkap yang bisa dicoba, bukan contoh print receh. Pakai markdown code block.'
     : '';
 
   const sections = [
     '[ATURAN]',
-    'Kamu DRAK-GPT by Dev ALIZZ. Gaya santai, tegas, ceplas-ceplos tipis tapi sopan. Jangan ngarang. Kalau data kurang, bilang data kurang.',
+    'Kamu DRAK-GPT by Dev ALIZZ. Gaya santai, tegas, ceplas-ceplos tipis tapi sopan. Jangan ngarang. Jangan sering bilang data kurang; kalau kurang, sebutkan detail spesifik yang kurang.',
     languageRule,
     getModeInstruction(model, intent, true),
     codingRule,
     attachmentSummary(attachments) ? `[LAMPIRAN]\n${attachmentSummary(attachments)}\nJangan klaim bisa melihat isi gambar kalau vision belum aktif.` : '',
     trimHistoryForCompactPrompt(history) ? `[KONTEKS SINGKAT]\n${trimHistoryForCompactPrompt(history)}` : '',
     '[PESAN]',
-    clampText(userMessage, 1200)
+    prepareLongTextPrompt(userMessage, intent === 'coding' || intent === 'error_debugging' ? 1500 : 1200)
   ].filter(Boolean).join('\n');
 
   return trimForGetPrompt(sections, intent === 'coding' ? 2500 : GET_PROMPT_LIMIT);
@@ -408,11 +456,11 @@ function buildFullPrompt({ history, userMessage, model, intent, attachments, for
     '[BAHASA WAJIB]',
     languageRule,
     '[ANTI HALUSINASI]',
-    'Jangan mengarang. Kalau data kurang, bilang data kurang. Kalau tidak tahu, bilang tidak tahu. Jawab sesuai konteks chat.',
+    'Jangan mengarang. Jangan jadikan data kurang sebagai jawaban default. Kalau benar-benar kurang, sebutkan bagian spesifik yang kurang dan tetap bantu dengan asumsi aman. Kalau tidak tahu, bilang jujur. Jawab sesuai konteks chat.',
     attachmentSummary(attachments) ? `[LAMPIRAN]\n${attachmentSummary(attachments)}` : '',
     trimHistoryForFullPrompt(history) ? `[KONTEKS CHAT TERAKHIR]\n${trimHistoryForFullPrompt(history)}` : '',
     '[PESAN USER]',
-    clampText(userMessage, MAX_MESSAGE_LENGTH),
+    prepareLongTextPrompt(userMessage, Math.min(MAX_MESSAGE_LENGTH, 4200)),
     '[ARAHAN OUTPUT]',
     'Balas sebagai DRAK-GPT. Gaya tajam, santai, berguna, dan jangan ngawur.'
   ].filter(Boolean).join('\n\n');
@@ -436,6 +484,8 @@ function cleanReply(rawReply) {
   ];
   for (const pattern of formalStarts) reply = reply.replace(pattern, '');
 
+  if (isLowValueDataKurang(reply)) return '';
+  reply = reply.replace(/^maaf[,\s]+data (lu |kamu |anda )?kurang[.!?]*/i, 'Detailnya masih kurang, Bos.');
   if (isBadReply(reply)) return '';
   return reply.trim();
 }
@@ -511,14 +561,27 @@ function greetingReply() {
   return 'Yo Bos, DRAK-GPT aktif. Mau dibantu ngapain? Chat biasa, coding, ide, atau bedah error juga gas.';
 }
 
+function ownerHelpLine() {
+  const owner = APP_CONFIG.owner || {};
+  const wa = owner.whatsappUrl || (owner.whatsapp ? `https://wa.me/${String(owner.whatsapp).replace(/\D/g, '')}` : '');
+  const tg = owner.telegramUrl || (owner.telegram ? `https://t.me/${String(owner.telegram).replace('@', '')}` : '');
+  return `Kalau error terus, chat ${owner.name || 'owner'}${wa ? `: ${wa}` : ''}${tg ? ` atau ${tg}` : ''}`;
+}
+
 function errorFallbackForIntent(intent) {
-  if (intent === 'image_or_visual') return 'Provider visual lagi gak bisa dipakai, Bos. Prompt lu udah gue siapin, coba ulangi bentar lagi.';
-  if (intent === 'music_or_audio') return 'Provider audio lagi pada ngambek, Bos. Coba ulangi sebentar lagi.';
-  return 'Provider AI lagi susah diajak kerja sama, Bos. Coba kirim ulang sebentar lagi.';
+  if (intent === 'image_or_visual') return `Provider visual lagi gak bisa dipakai, Bos. Prompt lu udah gue siapin, coba ulangi bentar lagi.
+
+${ownerHelpLine()}`;
+  if (intent === 'music_or_audio') return `Provider audio lagi pada ngambek, Bos. Coba ulangi sebentar lagi.
+
+${ownerHelpLine()}`;
+  return `Provider AI lagi ngambek, Bos. Gue udah coba fallback, tapi belum dapet jawaban bersih. Coba ulang bentar lagi.
+
+${ownerHelpLine()}`;
 }
 
 function visionFallback() {
-  return 'Gambarnya udah masuk, Bos. Tapi vision endpoint belum aktif, jadi gue belum bisa lihat isi gambarnya langsung. Kalau lu jelasin sedikit isi fotonya, gue bisa bantu bedah tanpa ngarang kayak dukun file.';
+  return 'Gambarnya udah masuk, Bos. Tapi mata vision-nya belum dipasang, jadi gue belum bisa lihat isi gambar langsung. Kalau lu jelasin gambarnya sedikit, gue bantu bedah tanpa ngarang kayak dukun file.';
 }
 
 export default async function handler(req, res) {
@@ -649,7 +712,7 @@ export default async function handler(req, res) {
     intent,
     provider: null,
     chatId,
-    reply: `${errorFallbackForIntent(intent)}\n\nKalau error terus, hubungi owner.`,
+    reply: errorFallbackForIntent(intent),
     timestamp: new Date().toISOString(),
     fallbackTried: errors.map((item) => item.provider)
   });

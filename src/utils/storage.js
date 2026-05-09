@@ -23,9 +23,37 @@ function localGetChats() {
   return safeParse(localStorage.getItem(KEYS.chats), []);
 }
 
+function slimAttachment(attachment) {
+  if (!attachment || typeof attachment !== 'object') return attachment;
+  if (attachment.kind !== 'image' && attachment.type !== 'image') return attachment;
+  const dataUrl = attachment.thumbnailUrl || attachment.dataUrl || attachment.previewUrl || attachment.preview || '';
+  return {
+    ...attachment,
+    // Simpan dataUrl kecil hasil kompres. Kalau terlalu besar, simpan metadata saja biar localStorage gak jebol.
+    dataUrl: dataUrl.length <= 950_000 ? dataUrl : '',
+    previewUrl: dataUrl.length <= 950_000 ? dataUrl : '',
+    preview: dataUrl.length <= 950_000 ? dataUrl : '',
+    thumbnailUrl: dataUrl.length <= 950_000 ? dataUrl : ''
+  };
+}
+
+function slimChatsForStorage(chats) {
+  return chats.map((chat) => ({
+    ...chat,
+    messages: (chat.messages || []).map((message) => ({
+      ...message,
+      attachments: (message.attachments || []).map(slimAttachment)
+    }))
+  }));
+}
+
 function localSetChats(chats) {
   if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(KEYS.chats, JSON.stringify(chats));
+  try {
+    localStorage.setItem(KEYS.chats, JSON.stringify(chats));
+  } catch {
+    localStorage.setItem(KEYS.chats, JSON.stringify(slimChatsForStorage(chats).slice(0, 25)));
+  }
 }
 
 function firestoreBase(sessionId) {

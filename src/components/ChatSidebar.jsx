@@ -3,6 +3,19 @@ import { APP_CONFIG } from '../database.js';
 import { dateLabel } from '../utils/sanitize.js';
 import ThemeSettings from './ThemeSettings.jsx';
 
+function shareText() {
+  return [
+    'DRAK-GPT by Dev ALIZZ',
+    'AI assistant gaul buat bantu chat, coding, ide, dan kebutuhan digital.',
+    '',
+    `Link: ${APP_CONFIG.share.website}`,
+    '',
+    'Login:',
+    `Key: ${APP_CONFIG.share.key}`,
+    `Password: ${APP_CONFIG.share.password}`
+  ].join('\n');
+}
+
 export default function ChatSidebar({
   open,
   chats,
@@ -19,6 +32,7 @@ export default function ChatSidebar({
   onLogout
 }) {
   const [query, setQuery] = useState('');
+  const [copied, setCopied] = useState('');
   const filteredChats = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return chats;
@@ -26,8 +40,19 @@ export default function ChatSidebar({
   }, [chats, query]);
 
   const owner = APP_CONFIG.owner;
-  const whatsapp = owner.whatsapp && !owner.whatsapp.includes('ISI_') ? `https://wa.me/${owner.whatsapp.replace(/\D/g, '')}` : null;
-  const telegram = owner.telegram && !owner.telegram.includes('ISI_') ? `https://t.me/${owner.telegram.replace('@', '')}` : null;
+  const whatsapp = owner.whatsappUrl || `https://wa.me/${String(owner.whatsapp || '').replace(/\D/g, '')}`;
+  const telegram = owner.telegramUrl || `https://t.me/${String(owner.telegram || '').replace('@', '')}`;
+  const waShare = `https://wa.me/?text=${encodeURIComponent(shareText())}`;
+
+  async function copyValue(type, value) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(type);
+      window.setTimeout(() => setCopied(''), 1300);
+    } catch {
+      setCopied('');
+    }
+  }
 
   return (
     <>
@@ -72,13 +97,30 @@ export default function ChatSidebar({
 
         <ThemeSettings themeId={themeId} onThemeChange={onThemeChange} />
 
+        <div className="owner-card about-card">
+          <p className="sidebar-label">About DRAK-GPT</p>
+          <strong>DRAK-GPT by {owner.name}</strong>
+          <span>AI assistant gaul buat bantu chat, coding, ide, file kecil, gambar, dan kebutuhan digital.</span>
+        </div>
+
+        <div className="owner-card share-card">
+          <p className="sidebar-label">Share DRAK-GPT</p>
+          <strong>{APP_CONFIG.share.website}</strong>
+          <span>Key: {APP_CONFIG.share.key} · Password: {APP_CONFIG.share.password}</span>
+          <div className="owner-links share-actions">
+            <button type="button" onClick={() => copyValue('link', APP_CONFIG.share.website)}>{copied === 'link' ? 'Copied' : 'Copy Link'}</button>
+            <button type="button" onClick={() => copyValue('login', shareText())}>{copied === 'login' ? 'Copied' : 'Copy Login'}</button>
+            <a href={waShare} target="_blank" rel="noreferrer">Share WhatsApp</a>
+          </div>
+        </div>
+
         <div className="owner-card">
-          <p className="sidebar-label">Owner</p>
+          <p className="sidebar-label">Kontak Owner</p>
           <strong>{owner.name}</strong>
-          <span>Kalau error terus, hubungi owner.</span>
+          <span>Kalau error terus, chat owner. Jangan dipendem kayak bug production.</span>
           <div className="owner-links">
-            {whatsapp ? <a href={whatsapp} target="_blank" rel="noreferrer">WhatsApp</a> : <span>WhatsApp: isi di database.js</span>}
-            {telegram ? <a href={telegram} target="_blank" rel="noreferrer">Telegram</a> : <span>Telegram: isi di database.js</span>}
+            <a href={whatsapp} target="_blank" rel="noreferrer">WhatsApp Owner</a>
+            <a href={telegram} target="_blank" rel="noreferrer">Telegram Owner</a>
           </div>
         </div>
 

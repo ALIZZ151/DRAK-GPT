@@ -75,6 +75,7 @@ export default function ChatInput({ disabled, processing = false, attachments, s
       try {
         const attachment = await fileToAttachment(file, { source });
         setAttachments((prev) => [...prev, attachment]);
+        if (attachment.compressed) onNotice(`Gambar dikompres jadi ${attachment.sizeLabel}. Aman dikirim, Bos.`);
       } catch (error) {
         onNotice(error.message);
       }
