@@ -111,7 +111,7 @@ export const APP_CONFIG = {
     name: 'DRAK-GPT',
     ownerText: 'DRAK-GPT by Dev ALIZZ',
     developer: 'Dev ALIZZ',
-    version: '1.2.0',
+    version: '1.2.1',
     description: 'AI assistant modern untuk bantu chat, coding, ide, dan kebutuhan digital.',
     storagePrefix: 'drak_gpt_v1'
   },
@@ -389,7 +389,8 @@ export const APP_CONFIG = {
     clientCooldownMs: 700,
     maxAttachments: 4,
     maxContextChars: 7800,
-    maxPromptChars: 14000,
+    maxPromptChars: 7000,
+    maxGetPromptChars: 2200,
     maxProviderAttempts: 4,
     providerTimeoutMs: 9000
   },

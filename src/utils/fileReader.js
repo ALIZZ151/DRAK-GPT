@@ -4,6 +4,20 @@ import { createId, formatBytes } from './sanitize.js';
 const TEXT_TYPES = ['text/plain', 'application/json', 'text/markdown'];
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 
+function cameraFileName() {
+  const pad = (value) => String(value).padStart(2, '0');
+  const now = new Date();
+  return `camera-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.jpg`;
+}
+
+function normalizeName(file, source) {
+  const name = String(file?.name || '').trim();
+  if (source === 'camera' && (!name || /^image\.?\w*$/i.test(name) || /^photo\.?\w*$/i.test(name))) {
+    return cameraFileName();
+  }
+  return name || (source === 'camera' ? cameraFileName() : 'attachment');
+}
+
 function readAsText(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -22,7 +36,7 @@ function readAsDataURL(file) {
   });
 }
 
-export async function fileToAttachment(file) {
+export async function fileToAttachment(file, options = {}) {
   const { maxSizeBytes, maxSizeMB, allowedTypes } = APP_CONFIG.upload;
 
   if (!file) throw new Error('File tidak ditemukan.');
@@ -30,15 +44,16 @@ export async function fileToAttachment(file) {
     throw new Error(`File kegedean, maksimal ${maxSizeMB}MB dulu biar server gak ngambek.`);
   }
 
-  const type = file.type || 'application/octet-stream';
+  const type = file.type || ((options.source === 'camera' || options.source === 'image') ? 'image/jpeg' : 'application/octet-stream');
   if (!allowedTypes.includes(type)) {
     throw new Error('Tipe file belum didukung. Pakai TXT, JSON, MD, PNG, JPG, WEBP, atau PDF kecil.');
   }
 
   const base = {
     id: createId('att'),
-    name: file.name,
-    type,
+    name: normalizeName(file, options.source),
+    type: 'file',
+    mime: type,
     size: file.size,
     sizeLabel: formatBytes(file.size),
     createdAt: new Date().toISOString()
@@ -49,16 +64,21 @@ export async function fileToAttachment(file) {
     return {
       ...base,
       kind: 'text',
+      type: 'text',
       content: content.slice(0, 12000),
       preview: content.slice(0, 400)
     };
   }
 
   if (IMAGE_TYPES.includes(type)) {
+    const dataUrl = await readAsDataURL(file);
     return {
       ...base,
       kind: 'image',
-      preview: await readAsDataURL(file),
+      type: 'image',
+      preview: dataUrl,
+      previewUrl: dataUrl,
+      dataUrl,
       content: ''
     };
   }
@@ -66,6 +86,7 @@ export async function fileToAttachment(file) {
   return {
     ...base,
     kind: 'file',
+    type: 'file',
     preview: 'PDF diterima, tapi parsing PDF belum aktif di versi awal.',
     content: ''
   };

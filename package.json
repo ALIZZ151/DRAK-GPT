@@ -1,7 +1,7 @@
 {
   "name": "drak-gpt",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "DRAK-GPT — AI Assistant by Dev ALIZZ",
   "type": "module",
   "scripts": {

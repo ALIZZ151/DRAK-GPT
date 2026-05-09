@@ -177,7 +177,7 @@ export default function MessageBubble({ message, onRetry }) {
           <div className="message-attachments">
             {message.attachments.map((attachment) => (
               <div className="message-attachment" key={attachment.id}>
-                {attachment.kind === 'image' ? <img src={attachment.preview} alt={attachment.name} /> : <span>{attachment.kind === 'text' ? 'TXT' : 'FILE'}</span>}
+                {attachment.kind === 'image' ? <img src={(attachment.preview || attachment.previewUrl || attachment.dataUrl)} alt={attachment.name} /> : <span>{attachment.kind === 'text' ? 'TXT' : 'FILE'}</span>}
                 <small>{attachment.name}</small>
               </div>
             ))}

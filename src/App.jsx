@@ -266,8 +266,11 @@ export default function App() {
       return true;
     }
     if (command === '/image') {
-      await appendAssistant('Fitur gambar sedang disiapkan. Mode chat dan coding sudah aktif.');
+      await appendAssistant('Ketik prompt gambar setelah command, Bos. Contoh: `/image naga merah cyber di langit malam`. Kalau cuma upload foto, itu masuk mode baca gambar, bukan generate gambar.');
       return true;
+    }
+    if (command.startsWith('/image ')) {
+      return false;
     }
 
     await appendAssistant('Command belum dikenal. Ketik `/help` buat daftar command.');
@@ -283,7 +286,15 @@ export default function App() {
         model: currentModel,
         chatId,
         history,
-        attachments: currentAttachments.map(({ preview, content, ...safe }) => safe)
+        attachments: currentAttachments.map((attachment) => ({
+          id: attachment.id,
+          type: attachment.kind || attachment.type,
+          kind: attachment.kind,
+          name: attachment.name,
+          mime: attachment.mime || attachment.type,
+          size: attachment.size,
+          dataUrl: attachment.dataUrl || attachment.previewUrl || (attachment.kind === 'image' ? attachment.preview : undefined)
+        }))
       })
     });
 
@@ -293,8 +304,9 @@ export default function App() {
   }, []);
 
   const sendMessage = useCallback(async (rawText) => {
-    const text = clampText(rawText, APP_CONFIG.limits.maxMessageLength);
     const currentAttachments = attachments;
+    const fallbackAttachmentText = hasImageAttachment(currentAttachments) ? 'Tolong analisis gambar ini.' : 'Tolong cek lampiran ini.';
+    const text = clampText(rawText || (currentAttachments.length ? fallbackAttachmentText : ''), APP_CONFIG.limits.maxMessageLength);
 
     if (!text && !currentAttachments.length) return;
     if (!canSendNow(APP_CONFIG.limits.clientCooldownMs)) {
@@ -310,7 +322,7 @@ export default function App() {
 
     const now = new Date().toISOString();
     const chatBase = activeChat || makeChat(model);
-    const userMessage = makeMessage('user', text || '[Lampiran]', { attachments: currentAttachments });
+    const userMessage = makeMessage('user', text || fallbackAttachmentText, { attachments: currentAttachments });
     const loadingMessage = makeMessage('assistant', '', { loading: true });
     const firstUserText = chatBase.messages.find((message) => message.role === 'user')?.content || text;
     const nextTitle = chatBase.messages.length ? chatBase.title : safeTitle(firstUserText || currentAttachments[0]?.name || 'Chat Baru');
@@ -325,16 +337,6 @@ export default function App() {
     setAttachments([]);
     await persistChat(chatWithUser);
 
-    if (hasImageAttachment(currentAttachments) && !APP_CONFIG.features.vision) {
-      const reply = 'Gambar sudah diterima, tapi provider aktif belum support vision. Coba ganti model kalau nanti endpoint vision sudah ditambah, atau jelaskan gambarnya manual.';
-      await persistChat({
-        ...chatWithUser,
-        updatedAt: new Date().toISOString(),
-        messages: chatWithUser.messages.map((message) => message.id === loadingMessage.id ? makeMessage('assistant', reply) : message)
-      });
-      return;
-    }
-
     const promptContext = attachmentsToPromptContext(currentAttachments);
     const finalPrompt = `${text}${promptContext}`.slice(0, APP_CONFIG.limits.maxMessageLength + 12000);
 
@@ -347,7 +349,7 @@ export default function App() {
         history: trimHistoryForPrompt(chatBase.messages)
       });
 
-      const reply = data.reply || (data.success ? 'DRAK-GPT sudah merespons, tapi isi jawaban kosong.' : 'DRAK-GPT lagi susah konek ke provider. Coba ulangi sebentar lagi.');
+      const reply = data.reply || 'Provider AI lagi susah diajak kerja sama, Bos. Coba kirim ulang sebentar lagi.';
       await persistChat({
         ...chatWithUser,
         updatedAt: new Date().toISOString(),

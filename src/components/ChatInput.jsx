@@ -60,7 +60,7 @@ export default function ChatInput({ disabled, processing = false, attachments, s
     };
   }, [attachments.length]);
 
-  async function handleFiles(files) {
+  async function handleFiles(files, source = 'file') {
     const selected = Array.from(files || []);
     if (!selected.length) return;
 
@@ -73,7 +73,7 @@ export default function ChatInput({ disabled, processing = false, attachments, s
 
     for (const file of selected.slice(0, allowed)) {
       try {
-        const attachment = await fileToAttachment(file);
+        const attachment = await fileToAttachment(file, { source });
         setAttachments((prev) => [...prev, attachment]);
       } catch (error) {
         onNotice(error.message);
@@ -86,6 +86,9 @@ export default function ChatInput({ disabled, processing = false, attachments, s
     if (!text.trim() && !attachments.length) return;
     setValue('');
     onSend(text);
+    [fileInputRef, imageInputRef, cameraInputRef].forEach((input) => {
+      if (input.current) input.current.value = '';
+    });
   }
 
   return (
@@ -96,7 +99,7 @@ export default function ChatInput({ disabled, processing = false, attachments, s
           <button type="button" onClick={() => fileInputRef.current?.click()} title="Upload file kecil">＋File</button>
           <button type="button" onClick={() => imageInputRef.current?.click()} title="Upload gambar">Gambar</button>
           <button type="button" onClick={() => cameraInputRef.current?.click()} title="Kamera mobile">Kamera</button>
-          <button type="button" onClick={() => onSend('/image')} title="Buat gambar">/image</button>
+          <button type="button" onClick={() => { setValue((current) => current.trim() ? current : '/image '); textareaRef.current?.focus(); }} title="Buat gambar">/image</button>
         </div>
 
         <div className="composer-main">
@@ -121,9 +124,9 @@ export default function ChatInput({ disabled, processing = false, attachments, s
         </div>
       </div>
 
-      <input ref={fileInputRef} type="file" hidden multiple accept=".txt,.json,.md,.pdf,text/plain,application/json,text/markdown,application/pdf" onChange={(event) => handleFiles(event.target.files)} />
-      <input ref={imageInputRef} type="file" hidden multiple accept="image/png,image/jpeg,image/webp" onChange={(event) => handleFiles(event.target.files)} />
-      <input ref={cameraInputRef} type="file" hidden accept="image/*" capture="environment" onChange={(event) => handleFiles(event.target.files)} />
+      <input ref={fileInputRef} type="file" hidden multiple accept=".txt,.json,.md,.pdf,text/plain,application/json,text/markdown,application/pdf" onChange={(event) => handleFiles(event.target.files, 'file')} />
+      <input ref={imageInputRef} type="file" hidden multiple accept="image/png,image/jpeg,image/webp" onChange={(event) => handleFiles(event.target.files, 'image')} />
+      <input ref={cameraInputRef} type="file" hidden accept="image/*" capture="environment" onChange={(event) => handleFiles(event.target.files, 'camera')} />
     </section>
   );
 }

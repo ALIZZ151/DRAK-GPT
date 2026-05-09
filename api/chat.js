@@ -1,12 +1,15 @@
 import { APP_CONFIG, DRAK_SYSTEM_PROMPT, MODEL_INSTRUCTIONS } from '../src/database.js';
 
 const MAX_MESSAGE_LENGTH = APP_CONFIG.limits.maxMessageLength || 8000;
-const MAX_CONTEXT_CHARS = APP_CONFIG.limits.maxContextChars || 7800;
-const MAX_FINAL_PROMPT_CHARS = APP_CONFIG.limits.maxPromptChars || 14000;
 const MAX_PROVIDER_ATTEMPTS = APP_CONFIG.limits.maxProviderAttempts || 4;
+const DEFAULT_TIMEOUT_MS = APP_CONFIG.limits.providerTimeoutMs || 9000;
+const GET_PROMPT_LIMIT = APP_CONFIG.limits.maxGetPromptChars || 2200;
+const FULL_PROMPT_LIMIT = APP_CONFIG.limits.maxPromptChars || 7000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT = 22;
-const DEFAULT_TIMEOUT_MS = APP_CONFIG.limits.providerTimeoutMs || 9000;
+const MAX_ATTACHMENT_SIZE = APP_CONFIG.upload?.maxSizeBytes || 2 * 1024 * 1024;
+const ALLOWED_MIMES = new Set(APP_CONFIG.upload?.allowedTypes || []);
+const isProd = process.env.NODE_ENV === 'production';
 const rateStore = globalThis.__DRAK_RATE_STORE__ || new Map();
 globalThis.__DRAK_RATE_STORE__ = rateStore;
 
@@ -15,21 +18,30 @@ const PROVIDERS = Object.fromEntries(
 );
 
 const MODEL_CHAINS = {
-  instant: ['lexcode', 'nexray-gpt35', 'nexray-openai', 'nexray-gemini'],
-  thinking: ['nexray-gemini', 'nexray-deepseek', 'nexray-heck', 'nexray-openai'],
-  coding: ['nexray-heck', 'nexray-copilot', 'nexray-deepseek', 'nexray-gemini'],
-  pro: ['nexray-heck', 'nexray-gemini', 'nexray-openai', 'nexray-deepseek', 'lexcode']
+  instant: ['lexcode', 'nexray-gpt35', 'nexray-openai', 'nexray-gemini', 'nexray-chatgpt'],
+  thinking: ['nexray-gemini', 'nexray-deepseek', 'nexray-heck', 'nexray-openai', 'nexray-claude'],
+  coding: ['nexray-heck', 'nexray-copilot', 'nexray-deepseek', 'nexray-gemini', 'nexray-openai'],
+  pro: ['nexray-heck', 'nexray-gemini', 'nexray-openai', 'nexray-deepseek', 'nexray-chatgpt', 'lexcode']
 };
 
 const INTENT_CHAINS = {
   coding: ['nexray-heck', 'nexray-copilot', 'nexray-deepseek', 'nexray-gemini', 'nexray-openai', 'lexcode'],
   math: ['nexray-mathgpt', 'nexray-gemini', 'nexray-openai', 'lexcode'],
   muslim: ['nexray-muslim', 'nexray-gemini', 'nexray-openai'],
-  image_or_visual: ['nexray-veo2', 'nexray-gemini', 'nexray-openai', 'lexcode'],
-  music_or_audio: ['nexray-suno', 'nexray-gemini', 'nexray-openai', 'lexcode'],
+  image_or_visual: ['nexray-veo2', 'nexray-gemini', 'nexray-openai'],
+  music_or_audio: ['nexray-suno', 'nexray-gemini', 'nexray-openai'],
+  vision_image_question: [],
   thinking: ['nexray-gemini', 'nexray-deepseek', 'nexray-heck', 'nexray-openai'],
-  general_chat: ['nexray-gemini', 'nexray-openai', 'nexray-gpt35', 'lexcode', 'nexray-nexray', 'nexray-gitagpt']
+  general_chat: ['nexray-gemini', 'nexray-openai', 'nexray-gpt35', 'nexray-chatgpt', 'lexcode', 'nexray-nexray', 'nexray-gitagpt']
 };
+
+function logInfo(...args) {
+  if (!isProd) console.info('[DRAK-GPT]', ...args);
+}
+
+function logWarn(...args) {
+  if (!isProd) console.warn('[DRAK-GPT]', ...args);
+}
 
 function json(res, statusCode, payload) {
   res.statusCode = statusCode;
@@ -77,21 +89,45 @@ function clampText(text, max) {
 }
 
 function parseJsonSafe(text) {
+  const clean = String(text || '').trim();
+  if (!clean) return '';
   try {
-    return JSON.parse(text);
+    return JSON.parse(clean);
   } catch {
-    return text;
+    return clean;
   }
 }
 
-function compactJson(value, max = 900) {
-  try {
-    const formatted = JSON.stringify(value, null, 2);
-    if (!formatted || formatted === '{}' || formatted === '[]') return '';
-    return formatted.length > max ? `${formatted.slice(0, max)}\n...` : formatted;
-  } catch {
-    return '';
+function isHtmlError(text = '') {
+  const value = String(text || '').trim().toLowerCase();
+  return value.startsWith('<!doctype html') || value.startsWith('<html') || /cloudflare|cf-ray|access denied|attention required/.test(value);
+}
+
+function isBadReply(reply = '') {
+  const value = sanitizeMessage(reply).toLowerCase();
+  if (!value) return true;
+  if (value.length < 2) return true;
+  if (isHtmlError(value)) return true;
+  const exactBad = new Set(['undefined', 'null', 'false', 'nan', '{}', '[]', '[object object]']);
+  if (exactBad.has(value)) return true;
+  return /jawaban kosong|diblokir server|blocked|forbidden|bad gateway|server error|service unavailable|gateway timeout|rate limit exceeded|too many requests|internal server error|cannot get\s+\//i.test(value);
+}
+
+function collectStrings(value, bucket = []) {
+  if (value === null || value === undefined) return bucket;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (text && !isBadReply(text)) bucket.push(text);
+    return bucket;
   }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectStrings(item, bucket));
+    return bucket;
+  }
+  if (typeof value === 'object') {
+    Object.values(value).forEach((item) => collectStrings(item, bucket));
+  }
+  return bucket;
 }
 
 function findUrl(value) {
@@ -112,24 +148,32 @@ function findUrl(value) {
 
 function extractReply(value) {
   if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'string') return isBadReply(value) ? '' : value.trim();
   if (Array.isArray(value)) return value.map(extractReply).find(Boolean) || findUrl(value);
   if (typeof value === 'object') {
     const priorityPaths = [
       ['result', 'result'],
+      ['result', 'message'],
+      ['result', 'text'],
+      ['result', 'answer'],
       ['data', 'result'],
       ['data', 'message'],
+      ['data', 'text'],
       ['data', 'answer'],
       ['data', 'response'],
-      ['data', 'text'],
-      ['result'],
+      ['data', 'content'],
+      ['choices', 0, 'message', 'content'],
+      ['choices', 0, 'text'],
       ['reply'],
       ['message'],
       ['answer'],
       ['response'],
       ['text'],
       ['output'],
-      ['content']
+      ['content'],
+      ['ai'],
+      ['generated_text'],
+      ['result']
     ];
 
     for (const path of priorityPaths) {
@@ -142,99 +186,118 @@ function extractReply(value) {
     const mediaUrl = findUrl(value);
     if (mediaUrl) return mediaUrl;
 
-    const asJson = compactJson(value);
-    return asJson ? `Response provider:\n\`\`\`json\n${asJson}\n\`\`\`` : '';
+    const strings = collectStrings(value).sort((a, b) => b.length - a.length);
+    return strings.find((text) => text.length > 12) || '';
   }
   return '';
 }
 
-function parseLexCode(payload) {
-  const reply = payload?.result?.result || extractReply(payload);
-  if (!reply) throw new Error('Provider reply kosong');
-  return {
-    reply,
-    responseTime: payload?.result?.responseTime || null,
-    timestamp: payload?.result?.timestamp || new Date().toISOString()
-  };
-}
-
-function parseGeneric(payload) {
-  const reply = extractReply(payload);
-  if (!reply) throw new Error('Provider reply kosong');
-  return {
-    reply,
-    responseTime: payload?.responseTime || payload?.time || payload?.duration || null,
-    timestamp: payload?.timestamp || payload?.createdAt || new Date().toISOString()
-  };
-}
-
 function parsePayload(provider, payload) {
-  if (provider.parser === 'lexcode') return parseLexCode(payload);
-  return parseGeneric(payload);
+  const reply = provider.parser === 'lexcode'
+    ? (payload?.result?.result || extractReply(payload))
+    : extractReply(payload);
+
+  if (isBadReply(reply)) throw new Error('Provider reply kosong/invalid');
+
+  return {
+    reply,
+    responseTime: payload?.result?.responseTime || payload?.responseTime || payload?.time || payload?.duration || null,
+    timestamp: payload?.result?.timestamp || payload?.timestamp || payload?.createdAt || new Date().toISOString()
+  };
 }
 
-function detectIntent(message = '') {
+function normalizeAttachments(attachments = []) {
+  if (!Array.isArray(attachments)) return [];
+  return attachments.slice(0, APP_CONFIG.limits.maxAttachments || 4).map((item, index) => {
+    const mime = sanitizeMessage(item?.mime || item?.type || '');
+    const type = sanitizeMessage(item?.type || item?.kind || (mime.startsWith('image/') ? 'image' : 'file'));
+    const size = Number(item?.size || 0);
+    const name = sanitizeMessage(item?.name || `attachment-${index + 1}`);
+    const dataUrl = typeof item?.dataUrl === 'string' ? item.dataUrl : '';
+    return {
+      id: sanitizeMessage(item?.id || `att-${index + 1}`),
+      type: type === 'image' || mime.startsWith('image/') ? 'image' : type,
+      kind: sanitizeMessage(item?.kind || type),
+      name,
+      mime,
+      size,
+      hasDataUrl: Boolean(dataUrl),
+      dataUrl: dataUrl && dataUrl.length <= MAX_ATTACHMENT_SIZE * 1.5 ? dataUrl : ''
+    };
+  }).filter((item) => {
+    if (item.size > MAX_ATTACHMENT_SIZE) return false;
+    if (item.mime && ALLOWED_MIMES.size && !ALLOWED_MIMES.has(item.mime)) return false;
+    return Boolean(item.name);
+  });
+}
+
+function hasImageAttachment(attachments = []) {
+  return attachments.some((item) => item.type === 'image' || item.mime?.startsWith('image/'));
+}
+
+function attachmentSummary(attachments = []) {
+  if (!attachments.length) return '';
+  return attachments.map((item) => {
+    const size = item.size ? `${Math.ceil(item.size / 1024)}KB` : 'size unknown';
+    if (item.type === 'image') return `- User mengirim gambar: ${item.name} (${item.mime || 'image'}, ${size}). Vision endpoint belum aktif kecuali provider vision khusus tersedia.`;
+    return `- User mengirim file: ${item.name} (${item.mime || item.type || 'file'}, ${size}).`;
+  }).join('\n');
+}
+
+function wantsImageGeneration(message = '') {
+  const text = String(message).toLowerCase().trim();
+  return /^\/image\b/.test(text) || /\b(generate|buat|bikin|buatkan)\s+(gambar|image|visual|foto|poster|logo|video|anime|thumbnail)\b/i.test(text) || /\b(gambar|image|visual|video)\s+(dari prompt|pakai prompt)\b/i.test(text);
+}
+
+function wantsImageReading(message = '') {
   const text = String(message).toLowerCase();
+  return /(ini gambar apa|gambar ini apa|foto ini apa|apakah kamu kenal|kenal ini gambar|jelaskan foto|jelaskan gambar|baca gambar|analisis gambar|analisa gambar|lihat gambar|isi gambar|objek di gambar|tolong analisis gambar)/i.test(text);
+}
 
-  if (/(buat|bikin|fix|perbaiki|debug|source\s*code|full\s*code|kode lengkap|script|coding|website|web|bot|api|deploy|vercel|firebase|react|javascript|node\.?js|python|php|html|css|error|stack trace|console|npm|package\.json|vite|express|database|sql|firestore)/i.test(text)) {
-    return 'coding';
-  }
+function detectIntent(message = '', attachments = []) {
+  const text = String(message).toLowerCase();
+  const imageAttached = hasImageAttachment(attachments);
 
-  if (/(matematika|math|hitung|rumus|aljabar|kalkulus|persamaan|integral|turunan|statistik|probabilitas|geometri|trigonometri)/i.test(text)) {
-    return 'math';
-  }
+  if (imageAttached && !wantsImageGeneration(text)) return 'vision_image_question';
+  if (wantsImageGeneration(text)) return 'image_or_visual';
 
-  if (/(islam|muslim|doa|hadits|hadis|quran|alquran|sholat|salat|zakat|puasa|ramadhan|fiqih|ustadz)/i.test(text)) {
-    return 'muslim';
-  }
-
-  if (/(gambar|visual|image|foto|anime|poster|logo|desain|video|veo|generate\s*(image|gambar|video)|buatkan\s*(gambar|video)|render|thumbnail)/i.test(text)) {
-    return 'image_or_visual';
-  }
-
-  if (/(lagu|musik|music|audio|suno|beat|instrumental|nyanyi|lirik|melodi|song)/i.test(text)) {
-    return 'music_or_audio';
-  }
-
-  if (/(analisis|analyze|kenapa|mengapa|jelaskan detail|bedah|strategi|rencana|logic|logika)/i.test(text)) {
-    return 'thinking';
-  }
-
+  if (/(lagu|musik|music|audio|suno|beat|instrumental|nyanyi|lirik|melodi|song)/i.test(text)) return 'music_or_audio';
+  if (/(buat|bikin|fix|perbaiki|debug|source\s*code|full\s*code|kode lengkap|script|coding|website|web|bot|api|deploy|vercel|firebase|react|javascript|node\.?js|python|php|html|css|error|stack trace|console|npm|package\.json|vite|express|database|sql|firestore)/i.test(text)) return 'coding';
+  if (/(matematika|math|hitung|rumus|aljabar|kalkulus|persamaan|integral|turunan|statistik|probabilitas|geometri|trigonometri)/i.test(text)) return 'math';
+  if (/(islam|muslim|doa|hadits|hadis|quran|alquran|sholat|salat|zakat|puasa|ramadhan|fiqih|ustadz)/i.test(text)) return 'muslim';
+  if (/(analisis|analyze|kenapa|mengapa|jelaskan detail|bedah|strategi|rencana|logic|logika)/i.test(text)) return 'thinking';
   return 'general_chat';
 }
 
 function isIndonesianInput(message = '') {
   const text = stripCode(message).toLowerCase();
   const indonesianWords = [
-    'gw', 'gue', 'gua', 'lu', 'lo', 'bang', 'bos', 'kok', 'nih', 'dong', 'aja', 'banget', 'gimana', 'kenapa', 'buat', 'bikin', 'tolong', 'pakai', 'pake', 'nggak', 'ga', 'gak', 'tidak', 'yang', 'ini', 'itu', 'kalau', 'kalo', 'sama', 'dengan', 'dari', 'untuk', 'jadi', 'biar', 'error', 'web', 'website', 'kode', 'script'
+    'gw', 'gue', 'gua', 'lu', 'lo', 'bang', 'bos', 'kok', 'nih', 'dong', 'aja', 'banget', 'gimana', 'kenapa', 'buat', 'bikin', 'tolong', 'pakai', 'pake', 'nggak', 'ga', 'gak', 'tidak', 'yang', 'ini', 'itu', 'kalau', 'kalo', 'sama', 'dengan', 'dari', 'untuk', 'jadi', 'biar', 'error', 'web', 'website', 'kode', 'script', 'gambar'
   ];
   let score = 0;
   for (const word of indonesianWords) {
     if (new RegExp(`\\b${word}\\b`, 'i').test(text)) score += 1;
   }
-  return score >= 2 || /\b(apa|siapa|dimana|kapan|bagaimana|mengapa)\b/i.test(text);
+  return score >= 1 || /\b(apa|siapa|dimana|kapan|bagaimana|mengapa)\b/i.test(text);
 }
 
 function looksMostlyEnglish(reply = '') {
   const natural = stripCode(reply).toLowerCase().replace(/https?:\/\/\S+/g, ' ');
   const words = natural.match(/[a-zA-Z]{3,}/g) || [];
   if (words.length < 18) return false;
-
   const englishSet = new Set(['the', 'and', 'you', 'your', 'that', 'this', 'with', 'for', 'from', 'when', 'what', 'where', 'which', 'will', 'would', 'should', 'could', 'because', 'please', 'here', 'there', 'make', 'create', 'use', 'using', 'need', 'error', 'code', 'file', 'function', 'component']);
   const indonesianSet = new Set(['yang', 'dan', 'buat', 'bikin', 'untuk', 'dengan', 'kalau', 'kalo', 'karena', 'ini', 'itu', 'jadi', 'bisa', 'harus', 'jangan', 'pakai', 'pake', 'bos', 'lu', 'gue', 'gw', 'kode', 'file']);
-
   let english = 0;
   let indo = 0;
   for (const word of words) {
     if (englishSet.has(word)) english += 1;
     if (indonesianSet.has(word)) indo += 1;
   }
-
   return english >= 5 && english > indo * 2;
 }
 
 function getTimeoutForModel(model, intent) {
-  if (model === 'instant') return 7500;
+  if (model === 'instant') return 7000;
   if (model === 'pro') return 11_000;
   if (model === 'coding' || intent === 'coding') return 10_000;
   return DEFAULT_TIMEOUT_MS;
@@ -245,31 +308,35 @@ function uniqueChain(ids = []) {
   return ids.filter((id) => {
     if (seen.has(id)) return false;
     seen.add(id);
-    return Boolean(PROVIDERS[id]);
+    const provider = PROVIDERS[id];
+    return Boolean(provider && provider.enabled !== false);
   });
 }
 
 function getProviderChain(model, intent) {
   const intentChain = INTENT_CHAINS[intent] || [];
   const modelChain = MODEL_CHAINS[model] || MODEL_CHAINS.instant;
-
-  // Intent khusus lebih penting dari model, tapi model tetap jadi fallback.
   if (['coding', 'math', 'muslim', 'image_or_visual', 'music_or_audio'].includes(intent)) {
-    return uniqueChain([...intentChain, ...modelChain]).slice(0, MAX_PROVIDER_ATTEMPTS);
+    return uniqueChain([...intentChain, ...modelChain, ...INTENT_CHAINS.general_chat]).slice(0, MAX_PROVIDER_ATTEMPTS);
   }
-
   return uniqueChain([...modelChain, ...intentChain, ...INTENT_CHAINS.general_chat]).slice(0, MAX_PROVIDER_ATTEMPTS);
 }
 
-function trimHistoryForPrompt(history = [], maxChars = MAX_CONTEXT_CHARS) {
-  const safeHistory = Array.isArray(history) ? history : [];
-  const rows = safeHistory
+function trimHistoryForCompactPrompt(history = [], maxRows = 4, maxChars = 520) {
+  const rows = (Array.isArray(history) ? history : [])
     .filter((item) => item && (item.role === 'user' || item.role === 'assistant'))
-    .slice(-10)
-    .map((item) => {
-      const label = item.role === 'assistant' ? 'DRAK-GPT' : 'User';
-      return `${label}: ${clampText(item.content || '', 1200)}`;
-    });
+    .slice(-maxRows)
+    .map((item) => `${item.role === 'assistant' ? 'DRAK-GPT' : 'User'}: ${clampText(item.content || '', 180)}`);
+
+  const joined = rows.join('\n');
+  return joined.length > maxChars ? `${joined.slice(-maxChars)}\n...[konteks lama dipotong]` : joined;
+}
+
+function trimHistoryForFullPrompt(history = [], maxChars = 1800) {
+  const rows = (Array.isArray(history) ? history : [])
+    .filter((item) => item && (item.role === 'user' || item.role === 'assistant'))
+    .slice(-8)
+    .map((item) => `${item.role === 'assistant' ? 'DRAK-GPT' : 'User'}: ${clampText(item.content || '', 500)}`);
 
   const picked = [];
   let used = 0;
@@ -281,73 +348,76 @@ function trimHistoryForPrompt(history = [], maxChars = MAX_CONTEXT_CHARS) {
   return picked.join('\n');
 }
 
-function getModeInstruction(model, intent) {
+function getModeInstruction(model, intent, compact = false) {
+  if (compact) {
+    if (intent === 'coding' || model === 'coding') return 'Mode Coding: analisis singkat, beri kode lengkap kalau diminta, code block rapi, cara run singkat, jangan hardcode secret.';
+    if (intent === 'math') return 'Mode Math: hitung bertahap, jangan asal jawab kalau data kurang.';
+    if (intent === 'muslim') return 'Mode Muslim: hati-hati, jangan mengarang dalil.';
+    if (model === 'pro') return 'Mode Pro: jawaban matang, relevan, tetap hemat kata.';
+    if (model === 'thinking' || intent === 'thinking') return 'Mode Thinking: runtut, sebutkan kemungkinan paling masuk akal.';
+    return 'Mode Instant: cepat, ringkas, langsung ke inti.';
+  }
   const base = MODEL_INSTRUCTIONS[model] || MODEL_INSTRUCTIONS.instant;
-  if (intent === 'coding' && model !== 'coding') {
-    return `${base}\n\n[MODE AUTO: CODING]\n${MODEL_INSTRUCTIONS.coding}`;
-  }
-  if (intent === 'math') {
-    return `${base}\n\n[MODE AUTO: MATH]\nJawab perhitungan dengan langkah jelas. Jangan sok yakin kalau datanya kurang.`;
-  }
-  if (intent === 'muslim') {
-    return `${base}\n\n[MODE AUTO: MUSLIM]\nJawab hati-hati. Kalau perkara agama butuh rujukan kuat dan kamu tidak yakin, bilang belum bisa pastiin.`;
-  }
-  if (intent === 'image_or_visual') {
-    return `${base}\n\n[MODE AUTO: VISUAL]\nKalau provider visual tidak mengembalikan URL/media valid, jangan klaim gambar/video berhasil dibuat. Bantu rapikan prompt visualnya.`;
-  }
-  if (intent === 'music_or_audio') {
-    return `${base}\n\n[MODE AUTO: AUDIO]\nKalau provider audio tidak mengembalikan URL/media valid, jangan klaim lagu berhasil dibuat. Bantu rapikan prompt audio/musiknya.`;
-  }
+  if (intent === 'coding' && model !== 'coding') return `${base}\n\n[MODE AUTO: CODING]\n${MODEL_INSTRUCTIONS.coding}`;
+  if (intent === 'math') return `${base}\n\n[MODE AUTO: MATH]\nJawab perhitungan dengan langkah jelas. Jangan sok yakin kalau datanya kurang.`;
+  if (intent === 'muslim') return `${base}\n\n[MODE AUTO: MUSLIM]\nJawab hati-hati. Kalau perkara agama butuh rujukan kuat dan kamu tidak yakin, bilang belum bisa pastiin.`;
+  if (intent === 'image_or_visual') return `${base}\n\n[MODE AUTO: VISUAL]\nKalau provider visual tidak mengembalikan URL/media valid, jangan klaim gambar/video berhasil dibuat.`;
+  if (intent === 'music_or_audio') return `${base}\n\n[MODE AUTO: AUDIO]\nKalau provider audio tidak mengembalikan URL/media valid, jangan klaim lagu berhasil dibuat.`;
   return base;
 }
 
-function buildPrompt({ systemPrompt, history, userMessage, model, intent, forceIndonesian = false }) {
-  const context = trimHistoryForPrompt(history);
-  const languageRule = isIndonesianInput(userMessage) || forceIndonesian
-    ? 'Jawab menggunakan bahasa Indonesia gaul/tongkrongan. Jangan membalas bahasa Inggris kecuali user minta. Istilah coding boleh tetap English, penjelasan tetap Indonesia.'
-    : 'Jawab menggunakan bahasa yang sama dengan user. Kalau user pakai Inggris, boleh jawab Inggris. Kalau user campur, ikuti bahasa dominan user.';
+function trimForGetPrompt(text, maxLength = GET_PROMPT_LIMIT) {
+  const clean = sanitizeMessage(text);
+  return clean.length > maxLength ? `${clean.slice(0, maxLength)}\n...[prompt dipotong biar API GET gak ngambek]` : clean;
+}
 
-  const codingFormat = intent === 'coding'
-    ? [
-      '[FORMAT WAJIB KALAU CODING]',
-      '1. Pembuka singkat gaya DRAK-GPT.',
-      '2. Penjelasan singkat fungsi solusi.',
-      '3. Berikan kode lengkap dalam markdown code block.',
-      '4. Cara menjalankan.',
-      '5. Catatan penting kalau ada.',
-      'Jangan kasih kode receh yang tidak menyelesaikan kebutuhan user.'
-    ].join('\n')
+function buildCompactPrompt({ history, userMessage, model, intent, attachments, forceIndonesian = false }) {
+  const languageRule = isIndonesianInput(userMessage) || forceIndonesian
+    ? 'Jawab WAJIB bahasa Indonesia gaul/tongkrongan. Jangan Inggris kecuali user minta. Istilah coding tetap original.'
+    : 'Jawab pakai bahasa yang sama dengan user.';
+
+  const codingRule = intent === 'coding'
+    ? 'Kalau user minta coding/script/kode lengkap, beri solusi lengkap yang bisa dicoba, bukan contoh print receh. Pakai markdown code block.'
     : '';
 
   const sections = [
+    '[ATURAN]',
+    'Kamu DRAK-GPT by Dev ALIZZ. Gaya santai, tegas, ceplas-ceplos tipis tapi sopan. Jangan ngarang. Kalau data kurang, bilang data kurang.',
+    languageRule,
+    getModeInstruction(model, intent, true),
+    codingRule,
+    attachmentSummary(attachments) ? `[LAMPIRAN]\n${attachmentSummary(attachments)}\nJangan klaim bisa melihat isi gambar kalau vision belum aktif.` : '',
+    trimHistoryForCompactPrompt(history) ? `[KONTEKS SINGKAT]\n${trimHistoryForCompactPrompt(history)}` : '',
+    '[PESAN]',
+    clampText(userMessage, 1200)
+  ].filter(Boolean).join('\n');
+
+  return trimForGetPrompt(sections, intent === 'coding' ? 2500 : GET_PROMPT_LIMIT);
+}
+
+function buildFullPrompt({ history, userMessage, model, intent, attachments, forceIndonesian = false }) {
+  const languageRule = isIndonesianInput(userMessage) || forceIndonesian
+    ? 'Jawab menggunakan bahasa Indonesia gaul/tongkrongan. Jangan membalas bahasa Inggris kecuali user minta. Istilah coding boleh tetap English, penjelasan tetap Indonesia.'
+    : 'Jawab menggunakan bahasa yang sama dengan user.';
+
+  const sections = [
     '[IDENTITAS AI]',
-    systemPrompt,
-    '',
+    DRAK_SYSTEM_PROMPT,
     '[MODE AKTIF]',
-    getModeInstruction(model, intent),
-    '',
+    getModeInstruction(model, intent, false),
     '[BAHASA WAJIB]',
     languageRule,
-    '',
     '[ANTI HALUSINASI]',
-    'Jangan mengarang. Kalau data kurang, bilang data kurang. Kalau tidak tahu, bilang tidak tahu. Jawab sesuai konteks chat. Jangan sok yakin kalau belum pasti.',
-    '',
-    '[KONTEKS CHAT TERAKHIR]',
-    context || 'Belum ada konteks sebelumnya.',
-    '',
-    codingFormat,
-    codingFormat ? '' : null,
+    'Jangan mengarang. Kalau data kurang, bilang data kurang. Kalau tidak tahu, bilang tidak tahu. Jawab sesuai konteks chat.',
+    attachmentSummary(attachments) ? `[LAMPIRAN]\n${attachmentSummary(attachments)}` : '',
+    trimHistoryForFullPrompt(history) ? `[KONTEKS CHAT TERAKHIR]\n${trimHistoryForFullPrompt(history)}` : '',
     '[PESAN USER]',
-    clampText(userMessage, MAX_MESSAGE_LENGTH + 12_000),
-    '',
+    clampText(userMessage, MAX_MESSAGE_LENGTH),
     '[ARAHAN OUTPUT]',
     'Balas sebagai DRAK-GPT. Gaya tajam, santai, berguna, dan jangan ngawur.'
-  ].filter(Boolean);
+  ].filter(Boolean).join('\n\n');
 
-  const prompt = sections.join('\n');
-  return prompt.length > MAX_FINAL_PROMPT_CHARS
-    ? `${prompt.slice(0, MAX_FINAL_PROMPT_CHARS)}\n...[konteks dipotong otomatis]`
-    : prompt;
+  return sections.length > FULL_PROMPT_LIMIT ? `${sections.slice(0, FULL_PROMPT_LIMIT)}\n...[prompt dipotong otomatis]` : sections;
 }
 
 function cleanReply(rawReply) {
@@ -357,10 +427,6 @@ function cleanReply(rawReply) {
     .replace(/\n{4,}/g, '\n\n\n')
     .trim();
 
-  if (!reply) {
-    return 'Provider-nya ngasih jawaban kosong, Bos. Coba ulangi, ini API-nya lagi bengong.';
-  }
-
   const formalStarts = [
     /^Baik, saya akan membantu Anda dengan senang hati[,.!]?\s*/i,
     /^Sebagai (sebuah )?(model )?AI[^,.]*[,.]?\s*/i,
@@ -368,61 +434,63 @@ function cleanReply(rawReply) {
     /^Mohon maaf sebesar-besarnya[,.]?\s*/i,
     /^I'?m sorry[,.]?\s*/i
   ];
+  for (const pattern of formalStarts) reply = reply.replace(pattern, '');
 
-  for (const pattern of formalStarts) {
-    reply = reply.replace(pattern, '');
-  }
-
-  if (!reply.trim()) {
-    return 'Provider-nya ngasih jawaban kosong, Bos. Coba ulangi, ini API-nya lagi bengong.';
-  }
-
+  if (isBadReply(reply)) return '';
   return reply.trim();
 }
 
 function buildProviderUrl(provider, finalPrompt) {
   const url = new URL(provider.url);
-  url.searchParams.set(provider.param || 'text', finalPrompt);
-
+  const params = new URLSearchParams(url.search);
+  params.set(provider.param || 'text', finalPrompt);
   if (provider.extraParams && typeof provider.extraParams === 'object') {
     for (const [key, value] of Object.entries(provider.extraParams)) {
-      url.searchParams.set(key, String(value));
+      params.set(key, String(value));
     }
   }
-
+  url.search = params.toString();
   return url.toString();
 }
 
-async function callProvider(provider, finalPrompt, timeoutMs) {
+async function callProvider(provider, prompts, timeoutMs) {
   if (!provider || provider.enabled === false) throw new Error('Provider belum aktif');
-
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const started = Date.now();
   try {
+    const method = (provider.method || 'GET').toUpperCase();
+    const finalPrompt = method === 'GET' ? prompts.compact : prompts.full;
     const fetchOptions = {
-      method: provider.method || 'GET',
+      method,
       signal: controller.signal,
       headers: { Accept: 'application/json, text/plain;q=0.9' }
     };
 
     let url = provider.url;
-    if ((provider.method || 'GET').toUpperCase() === 'POST') {
+    if (method === 'POST') {
       fetchOptions.headers['Content-Type'] = 'application/json';
       fetchOptions.body = JSON.stringify({ message: finalPrompt, text: finalPrompt, prompt: finalPrompt });
     } else {
       url = buildProviderUrl(provider, finalPrompt);
+      if (url.length > 3900) throw new Error('URL GET terlalu panjang');
     }
 
+    logInfo('try provider', provider.id, method, `prompt=${finalPrompt.length}`);
     const response = await fetch(url, fetchOptions);
     const raw = await response.text();
     if (!response.ok) throw new Error(`Provider HTTP ${response.status}`);
+    if (isBadReply(raw)) throw new Error('Provider raw reply invalid');
 
     const payload = parseJsonSafe(raw);
     const parsed = parsePayload(provider, payload);
+    const reply = cleanReply(parsed.reply);
+    if (isBadReply(reply)) throw new Error('Provider reply kosong/invalid');
+
+    logInfo('provider ok', provider.id);
     return {
       ...parsed,
-      reply: cleanReply(parsed.reply),
+      reply,
       responseTime: parsed.responseTime || `${Date.now() - started}ms`
     };
   } catch (error) {
@@ -433,10 +501,24 @@ async function callProvider(provider, finalPrompt, timeoutMs) {
   }
 }
 
+
+function isSimpleGreeting(message = '') {
+  const text = sanitizeMessage(message).toLowerCase();
+  return /^(hai|halo|hallo|hello|hi|yo|p|assalamualaikum|salam)(\s+(bang|bos|bro|gan|min|dev))?[!?.\s]*$/i.test(text) || /^(bang|bos|bro|gan)[!?.\s]*$/i.test(text);
+}
+
+function greetingReply() {
+  return 'Yo Bos, DRAK-GPT aktif. Mau dibantu ngapain? Chat biasa, coding, ide, atau bedah error juga gas.';
+}
+
 function errorFallbackForIntent(intent) {
   if (intent === 'image_or_visual') return 'Provider visual lagi gak bisa dipakai, Bos. Prompt lu udah gue siapin, coba ulangi bentar lagi.';
   if (intent === 'music_or_audio') return 'Provider audio lagi pada ngambek, Bos. Coba ulangi sebentar lagi.';
-  return 'Provider AI lagi pada ngambek, Bos. Coba ulangi sebentar lagi.';
+  return 'Provider AI lagi susah diajak kerja sama, Bos. Coba kirim ulang sebentar lagi.';
+}
+
+function visionFallback() {
+  return 'Gambarnya udah masuk, Bos. Tapi vision endpoint belum aktif, jadi gue belum bisa lihat isi gambarnya langsung. Kalau lu jelasin sedikit isi fotonya, gue bisa bantu bedah tanpa ngarang kayak dukun file.';
 }
 
 export default async function handler(req, res) {
@@ -444,10 +526,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return json(res, 405, { success: false, reply: 'Method tidak didukung.' });
 
   if (!checkRateLimit(req)) {
-    return json(res, 429, {
-      success: false,
-      reply: 'Request terlalu cepat. Tunggu sebentar dulu biar server gak ngambek.'
-    });
+    return json(res, 429, { success: false, reply: 'Request terlalu cepat. Tunggu sebentar dulu biar server gak ngambek.' });
   }
 
   const body = typeof req.body === 'object' && req.body !== null ? req.body : await new Promise((resolve) => {
@@ -456,37 +535,51 @@ export default async function handler(req, res) {
     req.on('end', () => resolve(parseJsonSafe(data)));
   });
 
-  const message = sanitizeMessage(body.message);
-  const requestedModel = sanitizeMessage(body.model || 'instant');
+  const attachments = normalizeAttachments(body?.attachments);
+  const message = sanitizeMessage(body?.message);
+  const requestedModel = sanitizeMessage(body?.model || 'instant');
   const model = MODEL_CHAINS[requestedModel] ? requestedModel : 'instant';
-  const chatId = sanitizeMessage(body.chatId || '');
-  const history = Array.isArray(body.history) ? body.history : [];
-  const intent = detectIntent(message);
+  const chatId = sanitizeMessage(body?.chatId || '');
+  const history = Array.isArray(body?.history) ? body.history : [];
+  const intent = detectIntent(message, attachments);
   const shouldUseIndonesian = isIndonesianInput(message);
 
-  if (!message) {
-    return json(res, 400, {
-      success: false,
-      model,
-      reply: 'Pesan masih kosong, Bos.'
-    });
+  if (!message && !attachments.length) {
+    return json(res, 400, { success: false, model, reply: 'Pesan masih kosong, Bos.' });
   }
 
   if (message.length > MAX_MESSAGE_LENGTH + 12_000) {
-    return json(res, 413, {
-      success: false,
+    return json(res, 413, { success: false, model, reply: 'Pesan terlalu panjang. Ringkas dulu biar DRAK-GPT bisa proses.' });
+  }
+
+  if (attachments.some((item) => item.size > MAX_ATTACHMENT_SIZE)) {
+    return json(res, 413, { success: false, model, reply: 'File kegedean, Bos. Maksimal 2MB dulu biar server gak megap-megap.' });
+  }
+
+  if (intent === 'vision_image_question' && !APP_CONFIG.features.vision) {
+    return json(res, 200, {
+      success: true,
       model,
-      reply: 'Pesan terlalu panjang. Ringkas dulu biar DRAK-GPT bisa proses.'
+      intent,
+      provider: 'vision-fallback',
+      chatId,
+      reply: visionFallback(),
+      timestamp: new Date().toISOString()
     });
   }
 
-  const basePrompt = buildPrompt({
-    systemPrompt: APP_CONFIG.systemPrompt || DRAK_SYSTEM_PROMPT,
-    history,
-    userMessage: message,
-    model,
-    intent
-  });
+  if (intent === 'general_chat' && !attachments.length && isSimpleGreeting(message)) {
+    return json(res, 200, {
+      success: true,
+      model,
+      intent,
+      provider: 'local-greeting',
+      chatId,
+      reply: greetingReply(),
+      responseTime: '0ms',
+      timestamp: new Date().toISOString()
+    });
+  }
 
   const chain = getProviderChain(model, intent);
   const timeoutMs = getTimeoutForModel(model, intent);
@@ -495,25 +588,40 @@ export default async function handler(req, res) {
   for (const providerId of chain) {
     const provider = PROVIDERS[providerId];
     if (!provider) continue;
+
+    const prompts = {
+      compact: buildCompactPrompt({ history, userMessage: message, model, intent, attachments }),
+      full: buildFullPrompt({ history, userMessage: message, model, intent, attachments })
+    };
+
     try {
-      let result = await callProvider(provider, basePrompt, timeoutMs);
+      let result = await callProvider(provider, prompts, timeoutMs);
 
       if (shouldUseIndonesian && looksMostlyEnglish(result.reply)) {
         try {
-          const retryPrompt = buildPrompt({
-            systemPrompt: APP_CONFIG.systemPrompt || DRAK_SYSTEM_PROMPT,
-            history,
-            userMessage: `${message}\n\n[ULANGI JAWABAN]\nJawaban sebelumnya salah bahasa. Ulangi dalam bahasa Indonesia gaul/tongkrongan. Jangan translate kode, command, nama function, atau error asli.`,
-            model,
-            intent,
-            forceIndonesian: true
-          });
-          const retryResult = await callProvider(provider, retryPrompt, Math.min(6000, timeoutMs));
-          if (retryResult?.reply && !looksMostlyEnglish(retryResult.reply)) {
-            result = retryResult;
-          }
+          const retryPrompts = {
+            compact: buildCompactPrompt({
+              history,
+              userMessage: `${message}\n\n[ULANGI JAWABAN]\nJawaban sebelumnya salah bahasa. Ulangi dalam bahasa Indonesia gaul/tongkrongan. Jangan translate kode, command, nama function, atau error asli.`,
+              model,
+              intent,
+              attachments,
+              forceIndonesian: true
+            }),
+            full: buildFullPrompt({
+              history,
+              userMessage: `${message}\n\n[ULANGI JAWABAN]\nJawaban sebelumnya salah bahasa. Ulangi dalam bahasa Indonesia gaul/tongkrongan. Jangan translate kode, command, nama function, atau error asli.`,
+              model,
+              intent,
+              attachments,
+              forceIndonesian: true
+            })
+          };
+          const retryResult = await callProvider(provider, retryPrompts, Math.min(6000, timeoutMs));
+          if (retryResult?.reply && !looksMostlyEnglish(retryResult.reply)) result = retryResult;
         } catch (retryError) {
           errors.push({ provider: providerId, message: `language retry: ${retryError.message}` });
+          logWarn('language retry failed', providerId, retryError.message);
         }
       }
 
@@ -531,6 +639,7 @@ export default async function handler(req, res) {
       });
     } catch (error) {
       errors.push({ provider: providerId, message: error.message });
+      logWarn('provider failed', providerId, error.message);
     }
   }
 

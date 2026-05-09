@@ -6,7 +6,7 @@ export default function FilePreview({ attachments = [], onRemove }) {
       {attachments.map((item) => (
         <article className="file-preview" key={item.id}>
           {item.kind === 'image' ? (
-            <img src={item.preview} alt={item.name} />
+            <img src={(item.preview || item.previewUrl || item.dataUrl)} alt={item.name} />
           ) : (
             <span className="file-icon">{item.kind === 'text' ? 'TXT' : 'PDF'}</span>
           )}
