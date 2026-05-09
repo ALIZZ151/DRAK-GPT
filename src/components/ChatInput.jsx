@@ -9,13 +9,56 @@ export default function ChatInput({ disabled, processing = false, attachments, s
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const cameraInputRef = useRef(null);
+  const inputShellRef = useRef(null);
 
   useEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
     textarea.style.height = 'auto';
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 120 ? 'auto' : 'hidden';
   }, [value]);
+
+  useEffect(() => {
+    const shell = inputShellRef.current;
+    if (!shell) return;
+
+    let frame = 0;
+    const root = document.documentElement;
+
+    const updateComposerMetrics = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const height = Math.ceil(shell.getBoundingClientRect().height);
+        root.style.setProperty('--composer-height', `${height}px`);
+
+        // Keep the composer visible when mobile keyboards shrink the visual viewport.
+        // This is viewport-based only; it does not depend on chat content height.
+        const viewport = window.visualViewport;
+        const keyboardOffset = viewport
+          ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop)
+          : 0;
+        root.style.setProperty('--composer-keyboard-offset', `${Math.ceil(keyboardOffset)}px`);
+      });
+    };
+
+    updateComposerMetrics();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateComposerMetrics) : null;
+    observer?.observe(shell);
+
+    window.addEventListener('resize', updateComposerMetrics);
+    window.visualViewport?.addEventListener('resize', updateComposerMetrics);
+    window.visualViewport?.addEventListener('scroll', updateComposerMetrics);
+
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener('resize', updateComposerMetrics);
+      window.visualViewport?.removeEventListener('resize', updateComposerMetrics);
+      window.visualViewport?.removeEventListener('scroll', updateComposerMetrics);
+      root.style.setProperty('--composer-keyboard-offset', '0px');
+    };
+  }, [attachments.length]);
 
   async function handleFiles(files) {
     const selected = Array.from(files || []);
@@ -46,7 +89,7 @@ export default function ChatInput({ disabled, processing = false, attachments, s
   }
 
   return (
-    <section className="input-shell" aria-label="Input chat">
+    <section ref={inputShellRef} className="input-shell" aria-label="Input chat">
       <FilePreview attachments={attachments} onRemove={(id) => setAttachments((prev) => prev.filter((item) => item.id !== id))} />
       <div className="composer">
         <div className="attach-row">
