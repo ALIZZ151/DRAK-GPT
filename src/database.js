@@ -12,16 +12,17 @@ export const APP_CONFIG = {
     name: 'DRAK-GPT',
     ownerText: 'DRAK-GPT by Dev ALIZZ',
     developer: 'Dev ALIZZ',
-    version: '1.5.2',
-    description: 'AI assistant modern dengan output Markdown dan code block rapi.',
+    version: '1.5.3',
+    description: 'AI assistant modern dengan output Markdown, code block rapi, access gate server, dan API key fallback.',
     storagePrefix: 'drak_gpt_v1'
   },
-  // Demo access gate only, not real authentication.
+  // Access gate dicek di server lewat /api/access.
+  // Key dan password asli disimpan di Vercel Environment Variables:
+  // DRAK_ACCESS_KEY dan DRAK_ACCESS_PASSWORD.
   accessGate: {
     enabled: true,
-    storageKey: 'drak_gpt_access_ok',
-    key: '5J4ZU89',
-    password: 'DRAK-GPT'
+    endpoint: '/api/access',
+    storageKey: 'drak_gpt_access_token'
   },
   owner: {
     name: 'Dev ALIZZ',
@@ -74,7 +75,7 @@ export const APP_CONFIG = {
       url: 'https://api.wormgpt.pw/v1/chat/completions',
       parser: 'openai-compatible',
       enabled: true,
-      note: 'API key disimpan di server melalui WORMGPT_API_KEY atau DRAK_PROVIDER_API_KEY.'
+      note: 'API key disimpan di server melalui WORMGPT_API_KEY, WORMGPT_API_KEY_2, atau WORMGPT_API_KEYS.'
     }
   ],
   themes: {
@@ -154,8 +155,7 @@ export const APP_CONFIG = {
   modelInstructions: MODEL_INSTRUCTIONS,
   share: {
     website: 'https://alizz.my.id',
-    key: '5J4ZU89',
-    password: 'DRAK-GPT'
+    loginNote: 'Minta key dan password ke owner.'
   },
   quickPrompts: []
 };
