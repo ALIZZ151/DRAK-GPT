@@ -278,9 +278,13 @@ export default function App() {
   }, [activeChat, appendAssistant, changeModel, newChat, persistChat]);
 
   const sendToApi = useCallback(async ({ text, chatId, currentModel, currentAttachments, history }) => {
+    const headers = { 'Content-Type': 'application/json' };
+    const accessToken = window.localStorage.getItem(APP_CONFIG.accessGate.storageKey) || '';
+    if (accessToken) headers['X-DRAK-Access-Token'] = accessToken;
+
     const response = await fetch('/api/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({
         message: text,
         model: currentModel,
@@ -304,6 +308,12 @@ export default function App() {
 
     const data = await response.json().catch(() => null);
     if (!data) throw new Error('DRAK-GPT lagi susah konek ke provider. Coba ulangi sebentar lagi.');
+
+    if (response.status === 401 && data?.code === 'ACCESS_DENIED') {
+      window.localStorage.removeItem(APP_CONFIG.accessGate.storageKey);
+      setHasAccess(false);
+    }
+
     return data;
   }, []);
 
