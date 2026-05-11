@@ -12,8 +12,8 @@ export const APP_CONFIG = {
     name: 'DRAK-GPT',
     ownerText: 'DRAK-GPT by Dev ALIZZ',
     developer: 'Dev ALIZZ',
-    version: '1.5.0',
-    description: 'AI assistant modern dengan provider chat completions baru.',
+    version: '1.5.2',
+    description: 'AI assistant modern dengan output Markdown dan code block rapi.',
     storagePrefix: 'drak_gpt_v1'
   },
   // Demo access gate only, not real authentication.
@@ -46,7 +46,7 @@ export const APP_CONFIG = {
       badge: 'LV 2',
       provider: 'wormgpt',
       fallbackProviders: [],
-      description: 'Mode UI saja; server tidak menambah prompt'
+      description: 'Mode UI saja; output diformat rapi'
     },
     {
       id: 'coding',
@@ -54,7 +54,7 @@ export const APP_CONFIG = {
       badge: 'LV 3',
       provider: 'wormgpt',
       fallbackProviders: [],
-      description: 'Mode UI saja; server tidak menambah prompt'
+      description: 'Mode UI saja; output diformat rapi'
     },
     {
       id: 'pro',
@@ -62,7 +62,7 @@ export const APP_CONFIG = {
       badge: 'LV PRO',
       provider: 'wormgpt',
       fallbackProviders: [],
-      description: 'Mode UI saja; server tidak menambah prompt'
+      description: 'Mode UI saja; output diformat rapi'
     }
   ],
   providers: [
