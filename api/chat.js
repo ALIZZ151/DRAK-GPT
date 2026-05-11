@@ -14,9 +14,9 @@ const DEFAULT_WORMGPT_API_URL = APP_CONFIG.providers?.[0]?.url || 'https://api.w
 const WORMGPT_MODEL = process.env.WORMGPT_MODEL || '';
 const ENABLE_FORMAT_INSTRUCTION = process.env.DRAK_FORMAT_RESPONSES !== 'false';
 const ACCESS_ENABLED = process.env.DRAK_ACCESS_ENABLED !== 'false';
-const ACCESS_KEY = process.env.DRAK_ACCESS_KEY || process.env.DRAK_LOGIN_KEY || '';
-const ACCESS_PASSWORD = process.env.DRAK_ACCESS_PASSWORD || process.env.DRAK_LOGIN_PASSWORD || '';
-const ACCESS_TOKEN_SECRET = process.env.DRAK_ACCESS_TOKEN_SECRET || `${ACCESS_KEY}:${ACCESS_PASSWORD}:${process.env.VERCEL_GIT_COMMIT_SHA || 'drak-gpt'}`;
+const ACCESS_KEY = String(process.env.DRAK_ACCESS_KEY || process.env.DRAK_LOGIN_KEY || process.env.ACCESS_KEY || '').trim();
+const ACCESS_PASSWORD = String(process.env.DRAK_ACCESS_PASSWORD || process.env.DRAK_LOGIN_PASSWORD || process.env.ACCESS_PASSWORD || '').trim();
+const ACCESS_TOKEN_SECRET = String(process.env.DRAK_ACCESS_TOKEN_SECRET || `${ACCESS_KEY}:${ACCESS_PASSWORD}:${process.env.VERCEL_GIT_COMMIT_SHA || 'drak-gpt'}`).trim();
 const FORMAT_SYSTEM_MESSAGE = [
   'Jawab langsung dengan format Markdown yang rapi dan mudah dibaca.',
   'Kalau memberi kode, selalu bungkus kode di fenced code block triple backticks dan tulis bahasa kodenya, contoh ```javascript.',
@@ -194,6 +194,7 @@ function buildMessages({ history, message }) {
   const messages = normalizeHistory(history);
   const last = messages[messages.length - 1];
 
+  // Hindari duplikat kalau frontend sudah mengirim pesan terakhir di history.
   if (!last || last.role !== 'user' || last.content !== message) {
     messages.push({ role: 'user', content: message });
   }
@@ -211,7 +212,7 @@ function guessCodeLanguage(code = '') {
   if (/^\s*[{[]/.test(text) && /[}\]]\s*$/.test(text)) return 'json';
   if (/<(html|body|div|section|script|style|!doctype)\b/i.test(text)) return 'html';
   if (/^\s*<\?php|\b(function|echo|namespace|use)\b.*\$/m.test(text)) return 'php';
-  if (/\b(import React|from ['"]react|useState|jsx|className=|export default function)\b/.test(text)) return 'jsx';
+  if (/\b(import React|from ['"]react|useState\(|jsx|className=|export default function)\b/.test(text)) return 'jsx';
   if (/\b(const|let|var|function|=>|console\.log|document\.|module\.exports|export default)\b/.test(text)) return 'javascript';
   if (/\b(def|print\(|import [a-zA-Z_][\w.]*|from [a-zA-Z_][\w.]* import|if __name__ == ['"]__main__['"])\b/.test(text)) return 'python';
   if (/\b(SELECT|INSERT|UPDATE|DELETE|CREATE TABLE|ALTER TABLE|DROP TABLE)\b/i.test(text)) return 'sql';
@@ -227,7 +228,7 @@ function codeLineScore(line = '') {
   const patterns = [
     /^(import|export|const|let|var|function|class|return|if|else|for|while|switch|case|try|catch|async|await|def|from|print|echo|public|private|protected|static|namespace|use)\b/,
     /^(<\/?[a-zA-Z][^>]*>|<!doctype\b)/i,
-    /^[{}\[();,]+;?$/,
+    /^[{}\[\]();,]+;?$/,
     /^(#include|SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/i,
     /^[A-Z0-9_]+=.+/,
     /[{};]|=>|<\/[a-zA-Z]+>|\bconsole\.log\b|\bclassName=/
