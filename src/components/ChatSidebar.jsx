@@ -10,9 +10,7 @@ function shareText() {
     '',
     `Link: ${APP_CONFIG.share.website}`,
     '',
-    'Login:',
-    `Key: ${APP_CONFIG.share.key}`,
-    `Password: ${APP_CONFIG.share.password}`
+    `Login: ${APP_CONFIG.share.loginNote || 'Minta key dan password ke owner.'}`
   ].join('\n');
 }
 
@@ -106,10 +104,10 @@ export default function ChatSidebar({
         <div className="owner-card share-card">
           <p className="sidebar-label">Share DRAK-GPT</p>
           <strong>{APP_CONFIG.share.website}</strong>
-          <span>Key: {APP_CONFIG.share.key} · Password: {APP_CONFIG.share.password}</span>
+          <span>{APP_CONFIG.share.loginNote || 'Minta key dan password ke owner.'}</span>
           <div className="owner-links share-actions">
             <button type="button" onClick={() => copyValue('link', APP_CONFIG.share.website)}>{copied === 'link' ? 'Copied' : 'Copy Link'}</button>
-            <button type="button" onClick={() => copyValue('login', shareText())}>{copied === 'login' ? 'Copied' : 'Copy Login'}</button>
+            <button type="button" onClick={() => copyValue('info', shareText())}>{copied === 'info' ? 'Copied' : 'Copy Info'}</button>
             <a href={waShare} target="_blank" rel="noreferrer">Share WhatsApp</a>
           </div>
         </div>

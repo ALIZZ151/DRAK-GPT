@@ -5,24 +5,44 @@ export default function LoginGate({ onUnlock }) {
   const [accessKey, setAccessKey] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  const canSubmit = accessKey.trim() && password.trim();
+  const canSubmit = accessKey.trim() && password.trim() && !submitting;
   const owner = APP_CONFIG.owner;
+  const gate = APP_CONFIG.accessGate;
   const whatsapp = owner.whatsappUrl || `https://wa.me/${String(owner.whatsapp || '').replace(/\D/g, '')}`;
   const telegram = owner.telegramUrl || `https://t.me/${String(owner.telegram || '').replace('@', '')}`;
 
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
-    const gate = APP_CONFIG.accessGate;
-    const valid = accessKey.trim() === gate.key && password === gate.password;
-    if (!valid) {
-      setError('Key atau password salah, Bos. Cek lagi, jangan asal gebrak keyboard.');
-      return;
-    }
+    if (!canSubmit) return;
+
+    setSubmitting(true);
     setError('');
-    window.localStorage.setItem(gate.storageKey, 'true');
-    onUnlock();
+
+    try {
+      const response = await fetch(gate.endpoint || '/api/access', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          key: accessKey.trim(),
+          password: password.trim()
+        })
+      });
+
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.message || 'Key atau password salah.');
+      }
+
+      window.localStorage.setItem(gate.storageKey, data.token || 'access-ok');
+      onUnlock(data.token || 'access-ok');
+    } catch (err) {
+      setError(err?.message || 'Login gagal. Coba ulangi.');
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -47,6 +67,7 @@ export default function LoginGate({ onUnlock }) {
             autoComplete="off"
             inputMode="text"
             placeholder="Masukkan key"
+            disabled={submitting}
           />
         </label>
 
@@ -59,6 +80,7 @@ export default function LoginGate({ onUnlock }) {
               type={showPassword ? 'text' : 'password'}
               autoComplete="current-password"
               placeholder="Masukkan password"
+              disabled={submitting}
             />
             <button type="button" onClick={() => setShowPassword((prev) => !prev)} aria-label={showPassword ? 'Sembunyikan password' : 'Tampilkan password'}>
               {showPassword ? 'Hide' : 'Show'}
@@ -66,9 +88,9 @@ export default function LoginGate({ onUnlock }) {
           </div>
         </label>
 
-        {error ? <p className="access-error" role="alert">{error}</p> : <p className="access-note">Demo access gate only, bukan keamanan server asli.</p>}
+        {error ? <p className="access-error" role="alert">{error}</p> : <p className="access-note">Key dan password dicek lewat server, bukan ditaruh di frontend.</p>}
 
-        <button className="access-submit" type="submit" disabled={!canSubmit}>Masuk</button>
+        <button className="access-submit" type="submit" disabled={!canSubmit}>{submitting ? 'Mengecek...' : 'Masuk'}</button>
 
         <div className="access-help-card">
           <span>Need help? Chat {owner.name}</span>
