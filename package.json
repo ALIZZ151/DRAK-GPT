@@ -1,8 +1,8 @@
 {
   "name": "drak-gpt",
   "private": true,
-  "version": "1.5.0",
-  "description": "DRAK-GPT — AI Assistant with chat completions provider",
+  "version": "1.5.3",
+  "description": "DRAK-GPT — AI Assistant with secure access gate and API key fallback",
   "type": "module",
   "scripts": {
     "dev": "vite",
