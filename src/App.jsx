@@ -80,7 +80,7 @@ function trimHistoryForPrompt(messages = [], maxMessages = 10, maxChars = APP_CO
 
 export default function App() {
   const [loading, setLoading] = useState(true);
-  const [hasAccess, setHasAccess] = useState(() => !APP_CONFIG.accessGate.enabled || window.localStorage.getItem(APP_CONFIG.accessGate.storageKey) === 'true');
+  const [hasAccess, setHasAccess] = useState(() => !APP_CONFIG.accessGate.enabled || Boolean(window.localStorage.getItem(APP_CONFIG.accessGate.storageKey)));
   const [sessionId] = useState(() => getSessionId());
   const [chats, setChats] = useState([]);
   const [activeChatId, setActiveChatId] = useState(null);
