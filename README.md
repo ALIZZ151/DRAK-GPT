@@ -18,7 +18,7 @@ Branding dibuat mandiri sebagai **DRAK-GPT by Dev ALIZZ**. Project ini tidak mem
   - Nexray Copilot
   - Nexray Deepseek
   - Adapter DPHN placeholder karena format method/body belum pasti.
-- Fallback provider otomatis saat provider utama error.
+- Provider chat completions baru via serverless proxy.
 - Riwayat chat tersimpan di localStorage dan bisa sync ke Firestore jika Firebase env diisi.
 - Sidebar/hamburger, pencarian riwayat, chat baru, rename, hapus chat, hapus semua.
 - Upload file kecil TXT/JSON/MD, preview gambar, kamera mobile.
@@ -73,7 +73,7 @@ package.json
 README.md
 ```
 
-Catatan: `aiProviders.js` bisa ditambahkan/diisi untuk memindahkan konfigurasi provider frontend kalau nanti diperlukan. Serverless provider utama saat ini berada di `api/chat.js` agar rahasia dan fallback tetap terkendali dari backend.
+Catatan: serverless provider utama berada di `api/chat.js` agar API key tetap aman di backend, bukan di frontend.
 
 ## Cara Install
 
@@ -199,7 +199,7 @@ Struktur chat:
   messages: [
     {
       id,
-      role: 'user' | 'assistant' | 'system',
+      role: 'user' | 'assistant',
       content,
       createdAt,
       attachments: []
@@ -209,6 +209,23 @@ Struktur chat:
 ```
 
 Catatan keamanan: Firebase web config boleh dipakai di frontend, tapi **service account/admin key jangan pernah dimasukin ke GitHub**. Jangan pakai rules `allow read, write: if true` untuk web yang mau dipost.
+
+
+## Update API Baru v1.5.0
+
+Versi ini sudah memakai satu provider OpenAI-compatible di `api/chat.js`:
+
+- Endpoint default: `https://api.wormgpt.pw/v1/chat/completions`
+- Request dikirim sebagai JSON `{ "messages": [...] }`
+- Tidak ada system prompt, mode prompt, atau prompt internal tambahan dari server.
+- Riwayat chat tetap dikirim sebagai `messages` agar percakapan nyambung.
+- API key tidak di-hardcode. Simpan di Vercel Environment Variables:
+
+```env
+WORMGPT_API_KEY=ISI_KEY_ASLI_DI_VERCEL
+```
+
+Alternatif lama `DRAK_PROVIDER_API_KEY` juga masih dibaca backend. Jangan masukkan key asli ke frontend, GitHub, atau file publik.
 
 ## Cara Ganti API Provider
 
@@ -224,17 +241,17 @@ Proxy provider utama ada di:
 api/chat.js
 ```
 
-Untuk menambah provider baru:
+Untuk ganti endpoint/provider:
 
-1. Tambahkan provider di `PROVIDERS` pada `api/chat.js`.
-2. Buat parser jika format responsenya berbeda.
-3. Tambahkan provider ke chain model di `MODELS`.
-4. Kalau butuh API key/token, jangan taruh di frontend. Simpan di Vercel Environment Variables.
+1. Ubah `WORMGPT_API_URL` di Vercel Environment Variables, atau ubah default URL di `src/database.js`.
+2. Simpan token di `WORMGPT_API_KEY` atau `DRAK_PROVIDER_API_KEY`.
+3. Kalau format response berbeda, edit fungsi `extractReply()` di `api/chat.js`.
+4. Jangan menaruh API key di file frontend, GitHub, atau file publik.
 
-Contoh rahasia backend:
+Contoh environment backend:
 
-```js
-const token = process.env.DRAK_PROVIDER_API_KEY;
+```env
+WORMGPT_API_KEY=ISI_KEY_ASLI_DI_VERCEL
 ```
 
 ## Cara Ganti icon.jpg dan vd.jpg
@@ -375,8 +392,8 @@ Perubahan utama:
 - Ditambahkan micro animation ringan untuk tombol, drawer, bubble chat, input focus, model selector, dan loading state.
 - Tombol logout ditambahkan di sidebar untuk menghapus status access gate.
 - Prompt AI diperkuat dengan karakter DRAK-GPT: bahasa Indonesia santai, ceplas-ceplos, toxic tipis tapi tetap sopan.
-- Anti-ngawur/anti-halusinasi ditambahkan ke prompt internal.
-- `/api/chat` sekarang menggabungkan system prompt + mode instruction + konteks 6–10 pesan terakhir sebelum mengirim ke provider.
+- Prompt internal/server-side sudah dihapus.
+- `/api/chat` sekarang mengirim `messages` langsung ke provider baru tanpa system prompt tambahan.
 - Response cleaner ditambahkan agar balasan kosong/formal berlebihan tidak langsung tampil mentah.
 
 Catatan deploy:
