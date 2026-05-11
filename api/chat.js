@@ -12,6 +12,12 @@ globalThis.__DRAK_RATE_STORE__ = rateStore;
 const WORMGPT_API_URL = process.env.WORMGPT_API_URL || APP_CONFIG.providers?.[0]?.url || 'https://api.wormgpt.pw/v1/chat/completions';
 const WORMGPT_API_KEY = process.env.WORMGPT_API_KEY || process.env.DRAK_PROVIDER_API_KEY || '';
 const WORMGPT_MODEL = process.env.WORMGPT_MODEL || '';
+const ENABLE_FORMAT_INSTRUCTION = process.env.DRAK_FORMAT_RESPONSES !== 'false';
+const FORMAT_SYSTEM_MESSAGE = [
+  'Jawab langsung dengan format Markdown yang rapi dan mudah dibaca.',
+  'Kalau memberi kode, selalu bungkus kode di fenced code block triple backticks dan tulis bahasa kodenya, contoh ```javascript.',
+  'Pisahkan penjelasan singkat dari kode. Jangan tampilkan potongan mentah seperti data:, JSON provider, atau metadata API.'
+].join(' ');
 
 function logWarn(...args) {
   if (!isProd) console.warn('[DRAK-GPT]', ...args);
@@ -93,12 +99,133 @@ function buildMessages({ history, message }) {
     messages.push({ role: 'user', content: message });
   }
 
+  if (ENABLE_FORMAT_INSTRUCTION) {
+    return [{ role: 'system', content: FORMAT_SYSTEM_MESSAGE }, ...messages];
+  }
+
   return messages;
+}
+
+function guessCodeLanguage(code = '') {
+  const text = String(code || '').trim();
+  if (!text) return '';
+  if (/^\s*[{[]/.test(text) && /[}\]]\s*$/.test(text)) return 'json';
+  if (/<(html|body|div|section|script|style|!doctype)\b/i.test(text)) return 'html';
+  if (/^\s*<\?php|\b(function|echo|namespace|use)\b.*\$/m.test(text)) return 'php';
+  if (/\b(import React|from ['"]react|useState\(|jsx|className=|export default function)\b/.test(text)) return 'jsx';
+  if (/\b(const|let|var|function|=>|console\.log|document\.|module\.exports|export default)\b/.test(text)) return 'javascript';
+  if (/\b(def|print\(|import [a-zA-Z_][\w.]*|from [a-zA-Z_][\w.]* import|if __name__ == ['"]__main__['"])\b/.test(text)) return 'python';
+  if (/\b(SELECT|INSERT|UPDATE|DELETE|CREATE TABLE|ALTER TABLE|DROP TABLE)\b/i.test(text)) return 'sql';
+  if (/^\s*[A-Z0-9_]+=.*/m.test(text)) return 'env';
+  if (/^\s*(npm|pnpm|yarn|git|cd|mkdir|rm|cp|mv|curl)\b/m.test(text)) return 'bash';
+  if (/^\s*[.#]?[\w-]+\s*\{|:\s*[^;]+;\s*$/m.test(text)) return 'css';
+  return 'txt';
+}
+
+function codeLineScore(line = '') {
+  const value = String(line || '').trim();
+  if (!value) return 0;
+  const patterns = [
+    /^(import|export|const|let|var|function|class|return|if|else|for|while|switch|case|try|catch|async|await|def|from|print|echo|public|private|protected|static|namespace|use)\b/,
+    /^(<\/?[a-zA-Z][^>]*>|<!doctype\b)/i,
+    /^[{}\[\]();,]+;?$/,
+    /^(#include|SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/i,
+    /^[A-Z0-9_]+=.+/,
+    /[{};]|=>|<\/[a-zA-Z]+>|\bconsole\.log\b|\bclassName=/
+  ];
+  return patterns.reduce((score, pattern) => score + (pattern.test(value) ? 1 : 0), 0);
+}
+
+function looksLikeCodeBlock(block = '') {
+  const lines = String(block || '').split('\n').map((line) => line.trimEnd()).filter((line) => line.trim());
+  if (!lines.length) return false;
+  if (lines.length === 1) {
+    const one = lines[0];
+    return one.length > 28 && codeLineScore(one) >= 2;
+  }
+  const score = lines.reduce((total, line) => total + (codeLineScore(line) > 0 ? 1 : 0), 0);
+  return score >= Math.max(2, Math.ceil(lines.length * 0.45));
+}
+
+function wrapLooseCodeBlocks(text = '') {
+  const raw = String(text || '').trim();
+  if (!raw || raw.includes('```')) return raw;
+
+  if (looksLikeCodeBlock(raw)) {
+    return `\`\`\`${guessCodeLanguage(raw)}\n${raw}\n\`\`\``;
+  }
+
+  return raw
+    .split(/\n{2,}/)
+    .map((block) => {
+      const clean = block.trim();
+      if (!looksLikeCodeBlock(clean)) return clean;
+      return `\`\`\`${guessCodeLanguage(clean)}\n${clean}\n\`\`\``;
+    })
+    .join('\n\n');
+}
+
+function normalizeMarkdownReply(text = '') {
+  return wrapLooseCodeBlocks(String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim());
+}
+
+function parseSseReply(text) {
+  const raw = String(text || '').trim();
+  if (!raw.includes('data:')) return '';
+
+  const parts = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) continue;
+
+    const data = trimmed.slice(5).trim();
+    if (!data || data === '[DONE]') continue;
+
+    const payload = parseJsonSafe(data);
+    if (typeof payload === 'string') {
+      parts.push(payload);
+      continue;
+    }
+
+    const choice = payload?.choices?.[0];
+    const candidates = [
+      payload?.content,
+      payload?.text,
+      payload?.message,
+      payload?.response,
+      payload?.reply,
+      payload?.data?.content,
+      payload?.data?.text,
+      payload?.data?.message,
+      payload?.data?.response,
+      payload?.data?.reply,
+      payload?.result?.content,
+      payload?.result?.text,
+      choice?.delta?.content,
+      choice?.message?.content,
+      choice?.text
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string') {
+        parts.push(candidate);
+        break;
+      }
+    }
+  }
+
+  return normalizeMarkdownReply(sanitizeMessage(parts.join('')));
 }
 
 function extractReply(payload) {
   if (!payload) return '';
-  if (typeof payload === 'string') return payload.trim();
+  if (typeof payload === 'string') {
+    return normalizeMarkdownReply(parseSseReply(payload) || sanitizeMessage(payload));
+  }
 
   const choice = payload?.choices?.[0];
   const candidates = [
@@ -126,7 +253,7 @@ function extractReply(payload) {
 
   for (const candidate of candidates) {
     const value = sanitizeMessage(candidate);
-    if (value) return value;
+    if (value) return normalizeMarkdownReply(value);
   }
 
   return '';
@@ -147,7 +274,7 @@ async function callWormGpt({ messages, signal }) {
     throw new Error('API key belum diset. Tambahkan WORMGPT_API_KEY atau DRAK_PROVIDER_API_KEY di Environment Variables.');
   }
 
-  const body = { messages };
+  const body = { messages, stream: false };
   if (WORMGPT_MODEL) body.model = WORMGPT_MODEL;
 
   const response = await fetch(WORMGPT_API_URL, {
