@@ -48,9 +48,79 @@ function languageLabel(language = '') {
     vue: 'Vue',
     react: 'React',
     env: 'ENV',
-    dotenv: 'ENV'
+    dotenv: 'ENV',
+    txt: 'CODE'
   };
   return map[lang] || (lang ? lang.toUpperCase() : 'CODE');
+}
+
+function detectLanguage(code = '') {
+  const text = String(code || '').trim();
+  if (!text) return '';
+  if (/^\s*[{[]/.test(text) && /[}\]]\s*$/.test(text)) return 'json';
+  if (/<(html|body|div|section|script|style|!doctype)\b/i.test(text)) return 'html';
+  if (/^\s*<\?php|\bnamespace\b|\becho\b.*\$/m.test(text)) return 'php';
+  if (/\b(import React|from ['"]react|useState\(|className=|export default function)\b/.test(text)) return 'jsx';
+  if (/\b(const|let|var|function|=>|console\.log|document\.|module\.exports|export default)\b/.test(text)) return 'javascript';
+  if (/\b(def|print\(|import [a-zA-Z_][\w.]*|from [a-zA-Z_][\w.]* import|if __name__ == ['"]__main__['"])\b/.test(text)) return 'python';
+  if (/\b(SELECT|INSERT|UPDATE|DELETE|CREATE TABLE|ALTER TABLE|DROP TABLE)\b/i.test(text)) return 'sql';
+  if (/^\s*[A-Z0-9_]+=.*/m.test(text)) return 'env';
+  if (/^\s*(npm|pnpm|yarn|git|cd|mkdir|rm|cp|mv|curl)\b/m.test(text)) return 'bash';
+  if (/^\s*[.#]?[\w-]+\s*\{|:\s*[^;]+;\s*$/m.test(text)) return 'css';
+  return 'txt';
+}
+
+function codeLineScore(line = '') {
+  const value = String(line || '').trim();
+  if (!value) return 0;
+  const patterns = [
+    /^(import|export|const|let|var|function|class|return|if|else|for|while|switch|case|try|catch|async|await|def|from|print|echo|public|private|protected|static|namespace|use)\b/,
+    /^(<\/?[a-zA-Z][^>]*>|<!doctype\b)/i,
+    /^[{}\[\]();,]+;?$/,
+    /^(#include|SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/i,
+    /^[A-Z0-9_]+=.+/,
+    /[{};]|=>|<\/[a-zA-Z]+>|\bconsole\.log\b|\bclassName=/
+  ];
+  return patterns.reduce((score, pattern) => score + (pattern.test(value) ? 1 : 0), 0);
+}
+
+function looksLikeLooseCode(block = '') {
+  const lines = String(block || '').split('\n').map((line) => line.trimEnd()).filter((line) => line.trim());
+  if (!lines.length) return false;
+  if (lines.length === 1) {
+    return lines[0].length > 28 && codeLineScore(lines[0]) >= 2;
+  }
+  const score = lines.reduce((total, line) => total + (codeLineScore(line) > 0 ? 1 : 0), 0);
+  return score >= Math.max(2, Math.ceil(lines.length * 0.45));
+}
+
+function splitLooseCodeBlocks(text = '') {
+  const raw = String(text || '');
+  if (!raw.trim()) return [{ type: 'text', value: raw }];
+
+  const chunks = raw.split(/(\n{2,})/);
+  const output = [];
+
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
+    if (!chunk) continue;
+    if (/^\n{2,}$/.test(chunk)) {
+      if (output.length && output[output.length - 1].type === 'text') {
+        output[output.length - 1].value += chunk;
+      } else {
+        output.push({ type: 'text', value: chunk });
+      }
+      continue;
+    }
+
+    if (looksLikeLooseCode(chunk)) {
+      output.push({ type: 'code', language: detectLanguage(chunk), value: chunk.trim() });
+    } else {
+      output.push({ type: 'text', value: chunk });
+    }
+  }
+
+  return output.length ? output : [{ type: 'text', value: raw }];
 }
 
 function CodeBlock({ code, language }) {
@@ -71,8 +141,8 @@ function CodeBlock({ code, language }) {
     <div className="code-block">
       <div className="code-block-toolbar">
         <span>{languageLabel(language)}</span>
-        <button type="button" onClick={copyCode} aria-label="Copy code block">
-          {copied ? 'Copied' : 'Copy'}
+        <button type="button" onClick={copyCode} aria-label="Salin kode">
+          {copied ? 'Disalin' : 'Salin Code'}
         </button>
       </div>
       <pre>
@@ -83,7 +153,7 @@ function CodeBlock({ code, language }) {
 }
 
 function parseMarkdownBlocks(content = '') {
-  const text = String(content || '');
+  const text = String(content || '').replace(/\r\n/g, '\n');
   const parts = [];
   const regex = /```([^\n`]*)?\n?([\s\S]*?)```/g;
   let lastIndex = 0;
@@ -96,7 +166,7 @@ function parseMarkdownBlocks(content = '') {
 
     const rawLang = (match[1] || '').trim();
     const code = match[2] || '';
-    parts.push({ type: 'code', language: rawLang, value: code });
+    parts.push({ type: 'code', language: rawLang || detectLanguage(code), value: code });
     lastIndex = regex.lastIndex;
   }
 
@@ -131,11 +201,18 @@ function MarkdownLite({ content }) {
 
   return (
     <div className="markdown-lite">
-      {blocks.map((block, index) => {
+      {blocks.flatMap((block, index) => {
         if (block.type === 'code') {
-          return <CodeBlock key={index} code={block.value} language={block.language} />;
+          return [<CodeBlock key={`code-${index}`} code={block.value} language={block.language} />];
         }
-        return <TextBlock key={index} block={block.value} blockIndex={index} />;
+
+        return splitLooseCodeBlocks(block.value).map((item, looseIndex) => {
+          const key = `${index}-${looseIndex}`;
+          if (item.type === 'code') {
+            return <CodeBlock key={`loose-code-${key}`} code={item.value} language={item.language} />;
+          }
+          return <TextBlock key={`text-${key}`} block={item.value} blockIndex={key} />;
+        });
       })}
     </div>
   );
