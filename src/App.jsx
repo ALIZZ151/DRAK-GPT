@@ -4,7 +4,7 @@ import LoadingScreen from './components/LoadingScreen.jsx';
 import LoginGate from './components/LoginGate.jsx';
 import ChatLayout from './components/ChatLayout.jsx';
 import { canSendNow } from './utils/rateLimit.js';
-import { attachmentsToPromptContext, hasImageAttachment } from './utils/fileReader.js';
+import { hasImageAttachment } from './utils/fileReader.js';
 import { clampText, createId, safeTitle } from './utils/sanitize.js';
 import {
   clearAllChats,
@@ -53,7 +53,7 @@ function helpText() {
     '- `/coding` aktifkan mode Coding',
     '- `/thinking` aktifkan mode Thinking',
     '- `/pro` aktifkan mode Pro',
-    '- `/image` info fitur gambar'
+    '- `/image` cek status fitur gambar'
   ].join('\n');
 }
 
@@ -266,7 +266,7 @@ export default function App() {
       return true;
     }
     if (command === '/image') {
-      await appendAssistant('Ketik prompt gambar setelah command, Bos. Contoh: `/image naga merah cyber di langit malam`. Kalau cuma upload foto, itu masuk mode baca gambar, bukan generate gambar.');
+      await appendAssistant('Fitur gambar belum aktif di API baru. Chat teks tetap jalan lewat provider baru.');
       return true;
     }
     if (command.startsWith('/image ')) {
@@ -341,12 +341,9 @@ export default function App() {
     setAttachments([]);
     await persistChat(chatWithUser);
 
-    const promptContext = attachmentsToPromptContext(currentAttachments);
-    const finalPrompt = `${text}${promptContext}`.slice(0, APP_CONFIG.limits.maxMessageLength + 12000);
-
     try {
       const data = await sendToApi({
-        text: finalPrompt,
+        text,
         chatId: chatWithUser.id,
         currentModel: model,
         currentAttachments,

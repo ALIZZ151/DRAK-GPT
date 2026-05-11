@@ -1,90 +1,10 @@
-export const DRAK_SYSTEM_PROMPT = [
-  'Kamu adalah DRAK-GPT, AI assistant modern buatan Dev ALIZZ.',
-  '',
-  'Gaya jawaban:',
-  '- Gunakan bahasa Indonesia gaul/tongkrongan kalau user pakai Indonesia.',
-  '- Panggil user “Bos” jika cocok.',
-  '- Jawab langsung ke inti, ceplas-ceplos, toxic tipis boleh tapi tetap sopan.',
-  '- Jangan terlalu formal seperti robot kantor.',
-  '- Jangan menghina kasar, jangan SARA, jangan melecehkan, jangan mengancam.',
-  '- Hindari basa-basi seperti “Baik, saya akan membantu Anda...”.',
-  '',
-  'Bahasa wajib:',
-  '- Deteksi bahasa user.',
-  '- Jika user memakai bahasa Indonesia/gaul Indonesia, WAJIB balas bahasa Indonesia gaul/tongkrongan.',
-  '- Jangan tiba-tiba menjawab bahasa Inggris kecuali user meminta.',
-  '- Istilah coding, command terminal, nama package, error asli, function, class, dan keyword programming boleh tetap English.',
-  '',
-  'Anti ngawur:',
-  '- Jangan mengarang fakta.',
-  '- Jangan sok yakin kalau belum pasti.',
-  '- Jangan sering menjawab “Maaf, data kurang”. Itu bukan jawaban default.',
-  '- Jawaban data kurang hanya boleh dipakai kalau user benar-benar minta data spesifik yang belum diberikan.',
-  '- Kalau data kurang, jelaskan bagian spesifik yang kurang dan tetap beri asumsi/opsi aman jika memungkinkan.',
-  '- Kalau user bertanya umum, tetap jawab semampunya dengan pengetahuan umum.',
-  '- Kalau user kirim text panjang, baca/analisis/rangkum text itu; jangan ditolak hanya karena panjang.',
-  '- Kalau tidak tahu, bilang jujur tanpa mengarang.',
-  '- Kalau ada banyak kemungkinan, sebutkan kemungkinan paling masuk akal.',
-  '- Jawab sesuai konteks chat terakhir dan jangan keluar topik.',
-  '',
-  'Coding:',
-  '- Jika user meminta coding/script/website/bot/API/fix error, beri solusi teknis yang bisa langsung dipakai.',
-  '- Kalau user minta kode lengkap, berikan kode lengkap, bukan contoh receh seperti print doang.',
-  '- Jika butuh beberapa file, berikan struktur file dan isi file penting.',
-  '- Pakai markdown code block yang rapi.',
-  '- Jelaskan cara menjalankan secara singkat.',
-  '- Jangan mengarang library palsu.',
-  '- Kalau butuh API key/token, pakai placeholder dan jelaskan harus taruh di environment variable, bukan frontend.',
-  '- Jangan hardcode secret.',
-  '',
-  'Gambar/file:',
-  '- Kalau user upload gambar tapi vision belum aktif, jelaskan jujur bahwa kamu belum bisa melihat isi gambar langsung.',
-  '- Jangan pura-pura mengenali foto/gambar kalau tidak ada vision endpoint.',
-  '- Kalau user minta generate gambar, gunakan provider visual jika tersedia dan jangan klaim sukses kalau response tidak valid.',
-  '',
-  'Fallback manusiawi:',
-  '- Kalau detail benar-benar kurang: “Detailnya masih kurang, Bos. Gue bisa bantu, tapi biar gak nebak-nebak kayak dukun terminal, kirim bagian ini dulu: ...”',
-  '- Kalau text panjang: “Gue tangkep inti dari text lu. Ini rangkumannya...”',
-  '- Kalau pertanyaan umum: “Bisa, Bos. Intinya begini...”',
-  '- Kalau tidak yakin: “Gue belum bisa pastiin 100%, tapi dari info yang ada kemungkinan besarnya begini: ...”',
-  '',
-  'Format jawaban:',
-  '- Jawab ringkas kalau pertanyaan simpel.',
-  '- Jawab detail dan bertahap kalau masalah teknis/project.',
-  '- Pakai struktur rapi, tapi jangan kaku.',
-  '- Gunakan gaya khas DRAK-GPT: tajam, santai, berguna, dan gak ngarang.'
-].join('\n');
+export const DRAK_SYSTEM_PROMPT = '';
 
 export const MODEL_INSTRUCTIONS = {
-  instant: [
-    'Mode aktif: Instant.',
-    'Jawab cepat, ringkas, dan langsung ke inti.',
-    'Cocok untuk chat harian, pertanyaan sederhana, dan bantuan cepat.',
-    'Tetap jujur, tapi jangan jadikan data kurang sebagai jawaban default.'
-  ].join('\n'),
-  thinking: [
-    'Mode aktif: Thinking.',
-    'Jawab lebih analitis, runtut, dan hati-hati.',
-    'Sebutkan kemungkinan paling masuk akal kalau penyebabnya lebih dari satu.',
-    'Jangan asal nebak. Kalau datanya benar-benar kurang, sebutkan detail spesifik yang dibutuhkan.'
-  ].join('\n'),
-  coding: [
-    'Mode aktif: Coding.',
-    'Fokus pada debugging, struktur project, error log, deploy, API, bot, dan solusi teknis.',
-    'Analisis penyebab dulu sebelum kasih solusi.',
-    'Kalau user minta kode lengkap, kasih kode lengkap yang bisa langsung dicoba.',
-    'Kalau butuh beberapa file, kasih struktur file dan isi file penting.',
-    'Jangan cuma ngasih contoh print atau potongan receh yang tidak menyelesaikan kebutuhan user.',
-    'Jelaskan cara install/run secara singkat.',
-    'Ingat: kalau user minta update project, jangan bikin project baru kecuali diminta jelas.'
-  ].join('\n'),
-  pro: [
-    'Mode aktif: Pro.',
-    'Jawaban harus paling matang, lebih detail, dan memakai konteks chat dengan serius.',
-    'Pecah solusi jadi langkah bertahap kalau masalahnya kompleks.',
-    'Gunakan konteks lebih banyak, tapi tetap hemat dan relevan.',
-    'Tetap jangan ngarang; kalau belum pasti, sebutkan asumsi dan batas kepastian.'
-  ].join('\n')
+  instant: '',
+  thinking: '',
+  coding: '',
+  pro: ''
 };
 
 export const APP_CONFIG = {
@@ -92,8 +12,8 @@ export const APP_CONFIG = {
     name: 'DRAK-GPT',
     ownerText: 'DRAK-GPT by Dev ALIZZ',
     developer: 'Dev ALIZZ',
-    version: '1.4.0',
-    description: 'AI assistant modern untuk bantu chat, coding, ide, dan kebutuhan digital.',
+    version: '1.5.0',
+    description: 'AI assistant modern dengan provider chat completions baru.',
     storagePrefix: 'drak_gpt_v1'
   },
   // Demo access gate only, not real authentication.
@@ -116,208 +36,45 @@ export const APP_CONFIG = {
       id: 'instant',
       label: 'Instant',
       badge: 'LV 1',
-      provider: 'lexcode',
-      fallbackProviders: ['nexray-gpt35', 'nexray-openai', 'nexray-gemini'],
-      description: 'Cepat buat chat harian'
+      provider: 'wormgpt',
+      fallbackProviders: [],
+      description: 'Chat cepat via API baru'
     },
     {
       id: 'thinking',
       label: 'Thinking',
       badge: 'LV 2',
-      provider: 'nexray-gemini',
-      fallbackProviders: ['nexray-deepseek', 'nexray-heck', 'nexray-openai'],
-      description: 'Lebih cocok buat analisis'
+      provider: 'wormgpt',
+      fallbackProviders: [],
+      description: 'Mode UI saja; server tidak menambah prompt'
     },
     {
       id: 'coding',
       label: 'Coding',
       badge: 'LV 3',
-      provider: 'nexray-heck',
-      fallbackProviders: ['nexray-copilot', 'nexray-deepseek', 'nexray-gemini'],
-      description: 'Mode bantu coding'
+      provider: 'wormgpt',
+      fallbackProviders: [],
+      description: 'Mode UI saja; server tidak menambah prompt'
     },
     {
       id: 'pro',
       label: 'Pro',
       badge: 'LV PRO',
-      provider: 'fallback',
-      fallbackProviders: ['nexray-heck', 'nexray-gemini', 'nexray-openai', 'nexray-deepseek', 'lexcode'],
-      description: 'Auto fallback ke provider terbaik'
+      provider: 'wormgpt',
+      fallbackProviders: [],
+      description: 'Mode UI saja; server tidak menambah prompt'
     }
   ],
   providers: [
     {
-      id: 'lexcode',
-      label: 'LexCode GPT5 Nano',
-      type: 'text',
-      method: 'GET',
-      url: 'https://api.lexcode.biz.id/api/ai/gpt5-nano',
-      param: 'text',
-      parser: 'lexcode',
-      enabled: true
-    },
-    {
-      id: 'dphn',
-      label: 'DPHN Chat API',
+      id: 'wormgpt',
+      label: 'WormGPT Chat Completions',
       type: 'text',
       method: 'POST',
-      url: 'https://chat.dphn.ai/api/chat',
-      param: 'text',
-      parser: 'generic',
-      enabled: false,
-      note: 'Format body belum pasti. Adapter disiapkan agar tidak membuat app error.'
-    },
-    {
-      id: 'nexray-chatgpt',
-      label: 'Nexray ChatGPT',
-      type: 'text',
-      method: 'GET',
-      url: 'https://api.nexray.eu.cc/ai/chatgpt',
-      param: 'text',
-      parser: 'generic',
-      enabled: true
-    },
-    {
-      id: 'nexray-claude',
-      label: 'Nexray Claude',
-      type: 'text',
-      method: 'GET',
-      url: 'https://api.nexray.eu.cc/ai/claude',
-      param: 'text',
-      parser: 'generic',
-      enabled: true
-    },
-    {
-      id: 'nexray-copilot',
-      label: 'Nexray Copilot',
-      type: 'text',
-      method: 'GET',
-      url: 'https://api.nexray.eu.cc/ai/copilot',
-      param: 'text',
-      parser: 'generic',
-      enabled: true
-    },
-    {
-      id: 'nexray-deepseek',
-      label: 'Nexray Deepseek',
-      type: 'text',
-      method: 'GET',
-      url: 'https://api.nexray.eu.cc/ai/deepseek',
-      param: 'text',
-      parser: 'generic',
-      enabled: true
-    },
-    {
-      id: 'nexray-veo2',
-      label: 'Nexray Veo2',
-      type: 'visual',
-      method: 'GET',
-      url: 'https://api.nexray.eu.cc/ai/veo2',
-      param: 'prompt',
-      parser: 'generic',
-      enabled: true
-    },
-    {
-      id: 'nexray-suno',
-      label: 'Nexray Suno',
-      type: 'audio',
-      method: 'GET',
-      url: 'https://api.nexray.eu.cc/ai/suno',
-      param: 'prompt',
-      parser: 'generic',
-      enabled: true
-    },
-    {
-      id: 'nexray-gemini',
-      label: 'Nexray Gemini',
-      type: 'text',
-      method: 'GET',
-      url: 'https://api.nexray.eu.cc/ai/gemini',
-      param: 'text',
-      parser: 'generic',
-      enabled: true
-    },
-    {
-      id: 'nexray-gitagpt',
-      label: 'Nexray GitaGPT',
-      type: 'text',
-      method: 'GET',
-      url: 'https://api.nexray.eu.cc/ai/gitagpt',
-      param: 'text',
-      parser: 'generic',
-      enabled: true
-    },
-    {
-      id: 'nexray-gpt35',
-      label: 'Nexray GPT 3.5 Turbo',
-      type: 'text',
-      method: 'GET',
-      url: 'https://api.nexray.eu.cc/ai/gpt-3.5-turbo',
-      param: 'text',
-      parser: 'generic',
-      enabled: true
-    },
-    {
-      id: 'nexray-hammer',
-      label: 'Nexray Hammer Aiko',
-      type: 'text',
-      method: 'GET',
-      url: 'https://api.nexray.eu.cc/ai/hammer',
-      param: 'text',
-      extraParams: { model: 'Aiko' },
-      parser: 'generic',
-      enabled: true
-    },
-    {
-      id: 'nexray-heck',
-      label: 'Nexray Heck GPT-5 Mini',
-      type: 'text',
-      method: 'GET',
-      url: 'https://api.nexray.eu.cc/ai/heck',
-      param: 'text',
-      extraParams: { model: 'openai/gpt-5-mini' },
-      parser: 'generic',
-      enabled: true
-    },
-    {
-      id: 'nexray-mathgpt',
-      label: 'Nexray MathGPT',
-      type: 'text',
-      method: 'GET',
-      url: 'https://api.nexray.eu.cc/ai/mathgpt',
-      param: 'text',
-      parser: 'generic',
-      enabled: true
-    },
-    {
-      id: 'nexray-muslim',
-      label: 'Nexray Muslim',
-      type: 'text',
-      method: 'GET',
-      url: 'https://api.nexray.eu.cc/ai/muslim',
-      param: 'text',
-      parser: 'generic',
-      enabled: true
-    },
-    {
-      id: 'nexray-nexray',
-      label: 'Nexray Nexray',
-      type: 'text',
-      method: 'GET',
-      url: 'https://api.nexray.eu.cc/ai/nexray',
-      param: 'text',
-      parser: 'generic',
-      enabled: true
-    },
-    {
-      id: 'nexray-openai',
-      label: 'Nexray OpenAI',
-      type: 'text',
-      method: 'GET',
-      url: 'https://api.nexray.eu.cc/ai/openai',
-      param: 'text',
-      parser: 'generic',
-      enabled: true
+      url: 'https://api.wormgpt.pw/v1/chat/completions',
+      parser: 'openai-compatible',
+      enabled: true,
+      note: 'API key disimpan di server melalui WORMGPT_API_KEY atau DRAK_PROVIDER_API_KEY.'
     }
   ],
   themes: {
@@ -382,11 +139,11 @@ export const APP_CONFIG = {
     maxPromptChars: 7000,
     maxGetPromptChars: 2200,
     longTextThreshold: 2500,
-    maxProviderAttempts: 4,
-    providerTimeoutMs: 9000
+    maxProviderAttempts: 1,
+    providerTimeoutMs: 20000
   },
   features: {
-    imageGeneration: true,
+    imageGeneration: false,
     vision: false,
     fileReading: true,
     firebaseSync: true,
