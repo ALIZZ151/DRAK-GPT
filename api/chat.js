@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { APP_CONFIG } from '../src/database.js';
 
 const MAX_MESSAGE_LENGTH = APP_CONFIG.limits.maxMessageLength || 12000;
@@ -9,10 +10,13 @@ const isProd = process.env.NODE_ENV === 'production';
 const rateStore = globalThis.__DRAK_RATE_STORE__ || new Map();
 globalThis.__DRAK_RATE_STORE__ = rateStore;
 
-const WORMGPT_API_URL = process.env.WORMGPT_API_URL || APP_CONFIG.providers?.[0]?.url || 'https://api.wormgpt.pw/v1/chat/completions';
-const WORMGPT_API_KEY = process.env.WORMGPT_API_KEY || process.env.DRAK_PROVIDER_API_KEY || '';
+const DEFAULT_WORMGPT_API_URL = APP_CONFIG.providers?.[0]?.url || 'https://api.wormgpt.pw/v1/chat/completions';
 const WORMGPT_MODEL = process.env.WORMGPT_MODEL || '';
 const ENABLE_FORMAT_INSTRUCTION = process.env.DRAK_FORMAT_RESPONSES !== 'false';
+const ACCESS_ENABLED = process.env.DRAK_ACCESS_ENABLED !== 'false';
+const ACCESS_KEY = process.env.DRAK_ACCESS_KEY || process.env.DRAK_LOGIN_KEY || '';
+const ACCESS_PASSWORD = process.env.DRAK_ACCESS_PASSWORD || process.env.DRAK_LOGIN_PASSWORD || '';
+const ACCESS_TOKEN_SECRET = process.env.DRAK_ACCESS_TOKEN_SECRET || `${ACCESS_KEY}:${ACCESS_PASSWORD}:${process.env.VERCEL_GIT_COMMIT_SHA || 'drak-gpt'}`;
 const FORMAT_SYSTEM_MESSAGE = [
   'Jawab langsung dengan format Markdown yang rapi dan mudah dibaca.',
   'Kalau memberi kode, selalu bungkus kode di fenced code block triple backticks dan tulis bahasa kodenya, contoh ```javascript.',
@@ -21,6 +25,102 @@ const FORMAT_SYSTEM_MESSAGE = [
 
 function logWarn(...args) {
   if (!isProd) console.warn('[DRAK-GPT]', ...args);
+}
+
+function unique(values = []) {
+  return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
+function splitEnvList(value = '') {
+  return String(value || '')
+    .split(/[\n,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function getProviderConfigs() {
+  const keys = unique([
+    ...splitEnvList(process.env.WORMGPT_API_KEYS),
+    process.env.WORMGPT_API_KEY,
+    process.env.DRAK_PROVIDER_API_KEY,
+    process.env.WORMGPT_API_KEY_1,
+    process.env.WORMGPT_API_KEY_2,
+    process.env.WORMGPT_API_KEY_3,
+    process.env.WORMGPT_API_KEY_4,
+    process.env.WORMGPT_API_KEY_5
+  ]);
+
+  const urls = unique([
+    ...splitEnvList(process.env.WORMGPT_API_URLS),
+    process.env.WORMGPT_API_URL,
+    process.env.WORMGPT_API_URL_1,
+    process.env.WORMGPT_API_URL_2,
+    process.env.WORMGPT_API_URL_3,
+    DEFAULT_WORMGPT_API_URL
+  ]);
+
+  return keys.map((key, index) => ({
+    key,
+    url: process.env[`WORMGPT_API_URL_${index + 1}`] || urls[index] || urls[0] || DEFAULT_WORMGPT_API_URL,
+    index: index + 1
+  }));
+}
+
+function safeEqual(a, b) {
+  const left = Buffer.from(String(a || ''));
+  const right = Buffer.from(String(b || ''));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function signAccessPayload(payloadEncoded) {
+  return crypto.createHmac('sha256', ACCESS_TOKEN_SECRET).update(payloadEncoded).digest('base64url');
+}
+
+function verifyAccessToken(token) {
+  if (!ACCESS_ENABLED) return true;
+  if (!ACCESS_KEY || !ACCESS_PASSWORD) return false;
+
+  const [payloadEncoded, signature] = String(token || '').split('.');
+  if (!payloadEncoded || !signature) return false;
+  if (!safeEqual(signature, signAccessPayload(payloadEncoded))) return false;
+
+  try {
+    const payload = JSON.parse(Buffer.from(payloadEncoded, 'base64url').toString('utf8'));
+    return payload?.app === 'drak-gpt' && Number(payload?.exp || 0) > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+function getAccessTokenFromRequest(req) {
+  const direct = req.headers['x-drak-access-token'];
+  if (Array.isArray(direct)) return direct[0] || '';
+  if (direct) return String(direct);
+
+  const authorization = req.headers.authorization || '';
+  const auth = Array.isArray(authorization) ? authorization[0] : String(authorization);
+  return auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
+}
+
+function checkAccess(req) {
+  if (!ACCESS_ENABLED) return { ok: true };
+  if (!ACCESS_KEY || !ACCESS_PASSWORD) {
+    return {
+      ok: false,
+      status: 500,
+      reply: 'Access gate belum diset. Tambahkan DRAK_ACCESS_KEY dan DRAK_ACCESS_PASSWORD di Vercel Environment Variables.'
+    };
+  }
+
+  if (!verifyAccessToken(getAccessTokenFromRequest(req))) {
+    return {
+      ok: false,
+      status: 401,
+      reply: 'Access token tidak valid atau sudah expired. Silakan login ulang.'
+    };
+  }
+
+  return { ok: true };
 }
 
 function json(res, statusCode, payload) {
@@ -94,7 +194,6 @@ function buildMessages({ history, message }) {
   const messages = normalizeHistory(history);
   const last = messages[messages.length - 1];
 
-  // Hindari duplikat kalau frontend sudah mengirim pesan terakhir di history.
   if (!last || last.role !== 'user' || last.content !== message) {
     messages.push({ role: 'user', content: message });
   }
@@ -112,7 +211,7 @@ function guessCodeLanguage(code = '') {
   if (/^\s*[{[]/.test(text) && /[}\]]\s*$/.test(text)) return 'json';
   if (/<(html|body|div|section|script|style|!doctype)\b/i.test(text)) return 'html';
   if (/^\s*<\?php|\b(function|echo|namespace|use)\b.*\$/m.test(text)) return 'php';
-  if (/\b(import React|from ['"]react|useState\(|jsx|className=|export default function)\b/.test(text)) return 'jsx';
+  if (/\b(import React|from ['"]react|useState|jsx|className=|export default function)\b/.test(text)) return 'jsx';
   if (/\b(const|let|var|function|=>|console\.log|document\.|module\.exports|export default)\b/.test(text)) return 'javascript';
   if (/\b(def|print\(|import [a-zA-Z_][\w.]*|from [a-zA-Z_][\w.]* import|if __name__ == ['"]__main__['"])\b/.test(text)) return 'python';
   if (/\b(SELECT|INSERT|UPDATE|DELETE|CREATE TABLE|ALTER TABLE|DROP TABLE)\b/i.test(text)) return 'sql';
@@ -128,7 +227,7 @@ function codeLineScore(line = '') {
   const patterns = [
     /^(import|export|const|let|var|function|class|return|if|else|for|while|switch|case|try|catch|async|await|def|from|print|echo|public|private|protected|static|namespace|use)\b/,
     /^(<\/?[a-zA-Z][^>]*>|<!doctype\b)/i,
-    /^[{}\[\]();,]+;?$/,
+    /^[{}\[();,]+;?$/,
     /^(#include|SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/i,
     /^[A-Z0-9_]+=.+/,
     /[{};]|=>|<\/[a-zA-Z]+>|\bconsole\.log\b|\bclassName=/
@@ -270,44 +369,63 @@ async function readBody(req) {
 }
 
 async function callWormGpt({ messages, signal }) {
-  if (!WORMGPT_API_KEY) {
-    throw new Error('API key belum diset. Tambahkan WORMGPT_API_KEY atau DRAK_PROVIDER_API_KEY di Environment Variables.');
+  const providers = getProviderConfigs();
+  if (!providers.length) {
+    throw new Error('API key belum diset. Tambahkan WORMGPT_API_KEY, WORMGPT_API_KEY_2, atau WORMGPT_API_KEYS di Environment Variables.');
   }
 
   const body = { messages, stream: false };
   if (WORMGPT_MODEL) body.model = WORMGPT_MODEL;
 
-  const response = await fetch(WORMGPT_API_URL, {
-    method: 'POST',
-    signal,
-    headers: {
-      Authorization: `Bearer ${WORMGPT_API_KEY}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json, text/plain;q=0.9'
-    },
-    body: JSON.stringify(body)
-  });
+  let lastError = '';
 
-  const raw = await response.text();
-  const payload = parseJsonSafe(raw);
+  for (const provider of providers) {
+    try {
+      const response = await fetch(provider.url, {
+        method: 'POST',
+        signal,
+        headers: {
+          Authorization: `Bearer ${provider.key}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/plain;q=0.9'
+        },
+        body: JSON.stringify(body)
+      });
 
-  if (!response.ok) {
-    const detail = typeof payload === 'object' ? (payload?.error?.message || payload?.message || payload?.error) : raw;
-    throw new Error(`Provider HTTP ${response.status}${detail ? `: ${sanitizeMessage(detail).slice(0, 180)}` : ''}`);
+      const raw = await response.text();
+      const payload = parseJsonSafe(raw);
+
+      if (!response.ok) {
+        const detail = typeof payload === 'object' ? (payload?.error?.message || payload?.message || payload?.error) : raw;
+        throw new Error(`Key #${provider.index} HTTP ${response.status}${detail ? `: ${sanitizeMessage(detail).slice(0, 180)}` : ''}`);
+      }
+
+      const reply = extractReply(payload);
+      if (!reply) throw new Error(`Key #${provider.index} mengembalikan jawaban kosong/format tidak dikenali.`);
+
+      return {
+        reply,
+        providerIndex: provider.index,
+        rawPayload: payload
+      };
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      lastError = error?.message || `Key #${provider.index} gagal.`;
+      logWarn('provider failed, trying next key', lastError);
+    }
   }
 
-  const reply = extractReply(payload);
-  if (!reply) throw new Error('Provider mengembalikan jawaban kosong/format tidak dikenali.');
-
-  return {
-    reply,
-    rawPayload: payload
-  };
+  throw new Error(`Semua API key gagal. Terakhir: ${lastError || 'Provider error'}`);
 }
 
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return json(res, 200, { success: true });
   if (req.method !== 'POST') return json(res, 405, { success: false, reply: 'Method tidak didukung.' });
+
+  const access = checkAccess(req);
+  if (!access.ok) {
+    return json(res, access.status || 401, { success: false, code: 'ACCESS_DENIED', reply: access.reply });
+  }
 
   if (!checkRateLimit(req)) {
     return json(res, 429, { success: false, reply: 'Request terlalu cepat. Tunggu sebentar dulu.' });
@@ -336,7 +454,8 @@ export default async function handler(req, res) {
       success: true,
       model,
       provider: 'wormgpt',
-      providerLabel: 'WormGPT Chat Completions',
+      providerLabel: `WormGPT Chat Completions #${result.providerIndex || 1}`,
+      providerIndex: result.providerIndex || 1,
       chatId,
       reply: result.reply,
       responseTime: `${Date.now() - started}ms`,
