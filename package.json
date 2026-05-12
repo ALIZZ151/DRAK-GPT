@@ -4,6 +4,9 @@
   "version": "2.0.0",
   "description": "DRAK-GPT — premium AI access platform with PostgreSQL auth, admin panel, and API key fallback",
   "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
