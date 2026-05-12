@@ -3,6 +3,8 @@ import { APP_CONFIG, getModelById, getThemeById } from './database.js';
 import LoadingScreen from './components/LoadingScreen.jsx';
 import LoginGate from './components/LoginGate.jsx';
 import ChatLayout from './components/ChatLayout.jsx';
+import AdminApp from './pages/AdminApp.jsx';
+import DashboardPage from './pages/DashboardPage.jsx';
 import { canSendNow } from './utils/rateLimit.js';
 import { hasImageAttachment } from './utils/fileReader.js';
 import { clampText, createId, safeTitle } from './utils/sanitize.js';
@@ -19,27 +21,13 @@ import {
   setLastChatId
 } from './utils/storage.js';
 
-function makeChat(model = 'instant') {
+function makeChat(model = 'default') {
   const now = new Date().toISOString();
-  return {
-    id: createId('chat'),
-    title: 'Chat Baru',
-    model,
-    createdAt: now,
-    updatedAt: now,
-    messages: []
-  };
+  return { id: createId('chat'), title: 'Chat Baru', model, createdAt: now, updatedAt: now, messages: [] };
 }
 
 function makeMessage(role, content, extra = {}) {
-  return {
-    id: createId('msg'),
-    role,
-    content,
-    createdAt: new Date().toISOString(),
-    attachments: [],
-    ...extra
-  };
+  return { id: createId('msg'), role, content, createdAt: new Date().toISOString(), attachments: [], ...extra };
 }
 
 function helpText() {
@@ -51,9 +39,9 @@ function helpText() {
     '- `/clear` bersihkan chat aktif',
     '- `/theme red|blue|purple|dark` ganti tema',
     '- `/coding` aktifkan mode Coding',
-    '- `/thinking` aktifkan mode Thinking',
-    '- `/pro` aktifkan mode Pro',
-    '- `/image` cek status fitur gambar'
+    '- `/business` aktifkan mode Business',
+    '- `/content` aktifkan mode Content',
+    '- `/dashboard` buka dashboard akun'
   ].join('\n');
 }
 
@@ -61,11 +49,7 @@ function trimHistoryForPrompt(messages = [], maxMessages = 10, maxChars = APP_CO
   const relevant = [...messages]
     .filter((message) => !message.loading && (message.role === 'user' || message.role === 'assistant'))
     .slice(-maxMessages)
-    .map((message) => ({
-      role: message.role,
-      content: clampText(message.content || '', 1200),
-      createdAt: message.createdAt
-    }));
+    .map((message) => ({ role: message.role, content: clampText(message.content || '', 1200), createdAt: message.createdAt }));
 
   let used = 0;
   const trimmed = [];
@@ -78,9 +62,21 @@ function trimHistoryForPrompt(messages = [], maxMessages = 10, maxChars = APP_CO
   return trimmed;
 }
 
+function usePathname() {
+  const [path, setPath] = useState(() => window.location.pathname || '/');
+  useEffect(() => {
+    const update = () => setPath(window.location.pathname || '/');
+    window.addEventListener('popstate', update);
+    return () => window.removeEventListener('popstate', update);
+  }, []);
+  return path;
+}
+
 export default function App() {
+  const path = usePathname();
   const [loading, setLoading] = useState(true);
-  const [hasAccess, setHasAccess] = useState(() => !APP_CONFIG.accessGate.enabled || Boolean(window.localStorage.getItem(APP_CONFIG.accessGate.storageKey)));
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authUser, setAuthUser] = useState(null);
   const [sessionId] = useState(() => getSessionId());
   const [chats, setChats] = useState([]);
   const [activeChatId, setActiveChatId] = useState(null);
@@ -99,6 +95,21 @@ export default function App() {
     window.clearTimeout(showNotice.timer);
     showNotice.timer = window.setTimeout(() => setNotice(''), 3600);
   }, []);
+
+  const checkUser = useCallback(async () => {
+    setAuthLoading(true);
+    try {
+      const response = await fetch('/api/auth/me', { credentials: 'include' });
+      const data = await response.json().catch(() => null);
+      setAuthUser(response.ok && data?.success ? data.user : null);
+    } catch {
+      setAuthUser(null);
+    } finally {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { checkUser(); }, [checkUser]);
 
   useEffect(() => {
     const onOnline = () => setOnline(true);
@@ -138,9 +149,7 @@ export default function App() {
         setLastChatId(fresh.id);
       }
     });
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, [sessionId]);
 
   const persistChat = useCallback(async (chat) => {
@@ -194,8 +203,7 @@ export default function App() {
     if (!current) return;
     const title = window.prompt('Nama baru chat:', current.title || 'Chat Baru');
     if (!title) return;
-    const renamed = { ...current, title: safeTitle(title), updatedAt: new Date().toISOString() };
-    await persistChat(renamed);
+    await persistChat({ ...current, title: safeTitle(title), updatedAt: new Date().toISOString() });
   }, [chats, persistChat]);
 
   const clearAll = useCallback(async () => {
@@ -213,80 +221,47 @@ export default function App() {
   }, [showNotice]);
 
   const appendAssistant = useCallback(async (content, extra = {}) => {
-    await updateActiveChat((chat) => ({
-      ...chat,
-      model,
-      updatedAt: new Date().toISOString(),
-      messages: [...chat.messages, makeMessage('assistant', content, extra)]
-    }));
+    await updateActiveChat((chat) => ({ ...chat, model, updatedAt: new Date().toISOString(), messages: [...chat.messages, makeMessage('assistant', content, extra)] }));
   }, [model, updateActiveChat]);
 
   const handleCommand = useCallback(async (raw) => {
     const command = raw.trim().toLowerCase();
     if (!command.startsWith('/')) return false;
-
-    if (command === '/help') {
-      await appendAssistant(helpText());
-      return true;
-    }
-    if (command === '/new') {
-      newChat();
-      return true;
-    }
+    if (command === '/help') { await appendAssistant(helpText()); return true; }
+    if (command === '/new') { newChat(); return true; }
+    if (command === '/dashboard') { window.location.href = '/dashboard'; return true; }
     if (command === '/clear') {
-      if (!activeChat) return true;
-      if (window.confirm('Bersihkan pesan di chat aktif?')) {
-        await persistChat({ ...activeChat, messages: [], updatedAt: new Date().toISOString(), title: 'Chat Baru' });
-      }
+      if (activeChat && window.confirm('Bersihkan pesan di chat aktif?')) await persistChat({ ...activeChat, messages: [], updatedAt: new Date().toISOString(), title: 'Chat Baru' });
       return true;
     }
     if (command.startsWith('/theme')) {
       const nextTheme = command.split(/\s+/)[1];
-      if (APP_CONFIG.themes[nextTheme]) {
-        setThemeId(nextTheme);
-        await appendAssistant(`Tema diganti ke ${APP_CONFIG.themes[nextTheme].label}.`);
-      } else {
-        await appendAssistant('Tema tersedia: red, blue, purple, dark. Contoh: `/theme red`');
-      }
+      if (APP_CONFIG.themes[nextTheme]) { setThemeId(nextTheme); await appendAssistant(`Tema diganti ke ${APP_CONFIG.themes[nextTheme].label}.`); }
+      else await appendAssistant('Tema tersedia: red, blue, purple, dark. Contoh: `/theme red`');
       return true;
     }
-    if (command === '/coding') {
-      changeModel('coding');
-      await appendAssistant('Mode Coding aktif. Kirim error atau potongan kode yang mau dibantu.');
+    if (['/coding', '/business', '/content'].includes(command)) {
+      const modeId = command.slice(1);
+      changeModel(modeId);
+      await appendAssistant(`Mode ${getModelById(modeId).label} aktif.`);
       return true;
     }
-    if (command === '/thinking') {
-      changeModel('thinking');
-      await appendAssistant('Mode Thinking aktif. Cocok buat analisis yang lebih pelan dan rapi.');
+    if (command === '/image' || command.startsWith('/image ')) {
+      await appendAssistant('Fitur gambar belum aktif. Chat teks tetap jalan lewat provider AI.');
       return true;
     }
-    if (command === '/pro') {
-      changeModel('pro');
-      await appendAssistant('Mode Pro aktif. DRAK-GPT akan coba provider terbaik dengan fallback.');
-      return true;
-    }
-    if (command === '/image') {
-      await appendAssistant('Fitur gambar belum aktif di API baru. Chat teks tetap jalan lewat provider baru.');
-      return true;
-    }
-    if (command.startsWith('/image ')) {
-      return false;
-    }
-
     await appendAssistant('Command belum dikenal. Ketik `/help` buat daftar command.');
     return true;
   }, [activeChat, appendAssistant, changeModel, newChat, persistChat]);
 
   const sendToApi = useCallback(async ({ text, chatId, currentModel, currentAttachments, history }) => {
-    const headers = { 'Content-Type': 'application/json' };
-    const accessToken = window.localStorage.getItem(APP_CONFIG.accessGate.storageKey) || '';
-    if (accessToken) headers['X-DRAK-Access-Token'] = accessToken;
-
     const response = await fetch('/api/chat', {
       method: 'POST',
-      headers,
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message: text,
+        mode: currentModel,
         model: currentModel,
         chatId,
         history,
@@ -308,12 +283,7 @@ export default function App() {
 
     const data = await response.json().catch(() => null);
     if (!data) throw new Error('DRAK-GPT lagi susah konek ke provider. Coba ulangi sebentar lagi.');
-
-    if (response.status === 401 && data?.code === 'ACCESS_DENIED') {
-      window.localStorage.removeItem(APP_CONFIG.accessGate.storageKey);
-      setHasAccess(false);
-    }
-
+    if (response.status === 401) setAuthUser(null);
     return data;
   }, []);
 
@@ -323,16 +293,9 @@ export default function App() {
     const text = clampText(rawText || (currentAttachments.length ? fallbackAttachmentText : ''), APP_CONFIG.limits.maxMessageLength);
 
     if (!text && !currentAttachments.length) return;
-    if (!canSendNow(APP_CONFIG.limits.clientCooldownMs)) {
-      showNotice('Tunggu sebentar sebelum kirim lagi.');
-      return;
-    }
-
+    if (!canSendNow(APP_CONFIG.limits.clientCooldownMs)) { showNotice('Tunggu sebentar sebelum kirim lagi.'); return; }
     if (await handleCommand(text)) return;
-    if (!online) {
-      showNotice('Internet offline. Riwayat masih bisa dibuka, kirim chat ditahan dulu.');
-      return;
-    }
+    if (!online) { showNotice('Internet offline. Riwayat masih bisa dibuka, kirim chat ditahan dulu.'); return; }
 
     const now = new Date().toISOString();
     const chatBase = activeChat || makeChat(model);
@@ -340,57 +303,37 @@ export default function App() {
     const loadingMessage = makeMessage('assistant', '', { loading: true });
     const firstUserText = chatBase.messages.find((message) => message.role === 'user')?.content || text;
     const nextTitle = chatBase.messages.length ? chatBase.title : safeTitle(firstUserText || currentAttachments[0]?.name || 'Chat Baru');
-    const chatWithUser = {
-      ...chatBase,
-      title: nextTitle,
-      model,
-      updatedAt: now,
-      messages: [...chatBase.messages, userMessage, loadingMessage]
-    };
+    const chatWithUser = { ...chatBase, title: nextTitle, model, updatedAt: now, messages: [...chatBase.messages, userMessage, loadingMessage] };
 
     setAttachments([]);
     await persistChat(chatWithUser);
 
     try {
-      const data = await sendToApi({
-        text,
-        chatId: chatWithUser.id,
-        currentModel: model,
-        currentAttachments,
-        history: trimHistoryForPrompt(chatBase.messages)
-      });
-
+      const data = await sendToApi({ text, chatId: chatWithUser.id, currentModel: model, currentAttachments, history: trimHistoryForPrompt(chatBase.messages) });
       const reply = data.reply || `Provider AI lagi ngambek, Bos. Coba ulang bentar lagi.\n\nKalau error terus, chat ${APP_CONFIG.owner.name}: ${APP_CONFIG.owner.whatsappUrl}`;
-      await persistChat({
-        ...chatWithUser,
-        updatedAt: new Date().toISOString(),
-        messages: chatWithUser.messages.map((message) => message.id === loadingMessage.id ? makeMessage('assistant', reply, { error: !data.success, provider: data.provider }) : message)
-      });
+      await persistChat({ ...chatWithUser, updatedAt: new Date().toISOString(), messages: chatWithUser.messages.map((message) => message.id === loadingMessage.id ? makeMessage('assistant', reply, { error: !data.success, provider: data.provider }) : message) });
     } catch {
-      await persistChat({
-        ...chatWithUser,
-        updatedAt: new Date().toISOString(),
-        messages: chatWithUser.messages.map((message) => message.id === loadingMessage.id ? makeMessage('assistant', `DRAK-GPT lagi susah konek ke provider. Coba ulangi sebentar lagi.\n\nKalau error terus, chat ${APP_CONFIG.owner.name}: ${APP_CONFIG.owner.whatsappUrl}`, { error: true }) : message)
-      });
+      await persistChat({ ...chatWithUser, updatedAt: new Date().toISOString(), messages: chatWithUser.messages.map((message) => message.id === loadingMessage.id ? makeMessage('assistant', `DRAK-GPT lagi susah konek ke provider. Coba ulangi sebentar lagi.\n\nKalau error terus, chat ${APP_CONFIG.owner.name}: ${APP_CONFIG.owner.whatsappUrl}`, { error: true }) : message) });
     }
   }, [activeChat, attachments, handleCommand, model, online, persistChat, sendToApi, showNotice]);
 
   const retryMessage = useCallback(async () => {
     if (!activeChat) return;
-    const messages = activeChat.messages;
-    const lastUser = [...messages].reverse().find((message) => message.role === 'user');
-    if (!lastUser) return;
-    await sendMessage(lastUser.content);
+    const lastUser = [...activeChat.messages].reverse().find((message) => message.role === 'user');
+    if (lastUser) await sendMessage(lastUser.content);
   }, [activeChat, sendMessage]);
 
-  const logoutAccessGate = useCallback(() => {
-    window.localStorage.removeItem(APP_CONFIG.accessGate.storageKey);
+  const logout = useCallback(async () => {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => null);
     setSidebarOpen(false);
-    setHasAccess(false);
+    setAuthUser(null);
   }, []);
 
+  if (path.startsWith('/admin')) return <AdminApp />;
   if (loading) return <LoadingScreen onDone={() => setLoading(false)} />;
-  if (!hasAccess) return <LoginGate onUnlock={() => setHasAccess(true)} />;
+  if (authLoading) return <main className="dashboard-shell"><p>Checking session...</p></main>;
+  if (!authUser) return <LoginGate onUnlock={(user) => setAuthUser(user)} />;
+  if (path.startsWith('/dashboard')) return <DashboardPage user={authUser} onLogout={logout} />;
 
   return (
     <ChatLayout
@@ -405,7 +348,7 @@ export default function App() {
       onDeleteChat={removeChat}
       onRenameChat={renameChat}
       onClearAll={clearAll}
-      onLogout={logoutAccessGate}
+      onLogout={logout}
       themeId={themeId}
       onThemeChange={setThemeId}
       online={online}
@@ -416,6 +359,7 @@ export default function App() {
       onRetry={retryMessage}
       notice={notice}
       onNotice={showNotice}
+      user={authUser}
     />
   );
 }

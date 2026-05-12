@@ -10,7 +10,7 @@ function shareText() {
     '',
     `Link: ${APP_CONFIG.share.website}`,
     '',
-    `Login: ${APP_CONFIG.share.loginNote || 'Minta key dan password ke owner.'}`
+    `Login: ${APP_CONFIG.share.loginNote || 'Minta username dan password ke owner.'}`
   ].join('\n');
 }
 
@@ -124,7 +124,7 @@ export default function ChatSidebar({
 
         <div className="sidebar-actions-stack">
           <button className="logout-button" type="button" onClick={onLogout}>
-            Logout Access Gate
+            Logout Akun
           </button>
           <button className="danger-button" type="button" onClick={onClearAll}>
             Hapus Semua Local Chat

@@ -4,7 +4,7 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "functions": {
-    "api/*.js": {
+    "api/**/*.js": {
       "maxDuration": 25
     }
   },
@@ -21,6 +21,10 @@
   ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/admin/(.*)", "destination": "/index.html" },
+    { "source": "/admin", "destination": "/index.html" },
+    { "source": "/dashboard", "destination": "/index.html" },
+    { "source": "/login", "destination": "/index.html" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

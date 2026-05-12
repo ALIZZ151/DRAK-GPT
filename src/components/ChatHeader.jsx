@@ -15,6 +15,7 @@ export default function ChatHeader({ model, onModelChange, onMenu, online, stora
         <span className={`status-pill ${online ? 'online' : 'offline'}`} title={online ? 'Online' : 'Offline'}>
           {online ? storageMode : 'Offline'}
         </span>
+        <a className="header-dashboard-link" href="/dashboard">Dashboard</a>
         <ModelSelector value={model} onChange={onModelChange} compact />
         <button className="icon-button menu-button" type="button" onClick={onMenu} aria-label="Buka menu">
           ☰

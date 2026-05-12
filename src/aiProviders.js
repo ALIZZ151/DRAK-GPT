@@ -1,6 +1,7 @@
-import { APP_CONFIG } from './database.js';
-
-export const aiProviders = APP_CONFIG.providers;
+// Public provider metadata only. Secret API keys are managed server-side in PostgreSQL.
+export const aiProviders = [
+  { id: 'openai-compatible', label: 'OpenAI-compatible API', enabled: true, note: 'Managed from /admin/api-keys' }
+];
 
 export function getProviderById(providerId) {
   return aiProviders.find((provider) => provider.id === providerId) || null;
